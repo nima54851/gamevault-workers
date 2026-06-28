@@ -1,0 +1,1384 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GameVault GM 管理后台</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0f1117;--surface:rgba(255,255,255,.04);--surface2:rgba(255,255,255,.07);
+  --border:rgba(255,255,255,.08);--text:#e2e8f0;--muted:rgba(255,255,255,.4);
+  --primary:#6366f1;--primary2:#8b5cf6;--green:#34d399;--yellow:#fbbf24;
+  --red:#ef4444;--pink:#f472b6;--blue:#60a5fa;--orange:#fb923c;
+}
+body{font-family:'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+a{color:var(--primary);text-decoration:none}
+
+/* ── TOPBAR ── */
+.topbar{background:linear-gradient(135deg,var(--primary),var(--primary2));padding:14px 24px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}
+.topbar .logo{font-size:18px;font-weight:700;color:#fff;display:flex;align-items:center;gap:8px}
+.topbar .actions{display:flex;align-items:center;gap:12px}
+.topbar .badge{background:rgba(255,255,255,.2);color:#fff;padding:4px 14px;border-radius:20px;font-size:12px;cursor:pointer;border:none}
+.topbar button{border:none;cursor:pointer;font-size:13px}
+
+/* ── STATS ROW ── */
+.stats-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;padding:20px 24px}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px}
+.stat-card .lbl{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+.stat-card .val{font-size:28px;font-weight:700}
+.stat-card .sub{color:var(--muted);font-size:11px;margin-top:4px}
+.stat-card.green .val{color:var(--green)}.stat-card.yellow .val{color:var(--yellow)}
+.stat-card.red .val{color:var(--red)}.stat-card.blue .val{color:var(--blue)}
+.stat-card.pink .val{color:var(--pink)}.stat-card.orange .val{color:var(--orange)}
+
+/* ── TABS ── */
+.tabs{display:flex;gap:4px;padding:0 24px;background:rgba(0,0,0,.3);border-bottom:1px solid var(--border);overflow-x:auto}
+.tab{padding:12px 18px;cursor:pointer;font-size:13px;color:var(--muted);border-bottom:2px solid transparent;white-space:nowrap;transition:all .2s}
+.tab:hover{color:var(--text)}.tab.active{color:var(--primary);border-bottom-color:var(--primary)}
+
+/* ── MAIN CONTENT ── */
+.main{padding:24px;max-width:1400px;margin:0 auto}
+.panel{display:none}.panel.active{display:block}
+
+/* ── SEARCH BAR ── */
+.search-bar{display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap}
+.search-bar input{padding:9px 14px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-size:14px;outline:none;flex:1;min-width:200px}
+.search-bar input:focus{border-color:var(--primary)}
+.search-bar input::placeholder{color:var(--muted)}
+
+/* ── SECTION TITLE ── */
+.section-title{font-size:15px;font-weight:600;color:var(--text);margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}
+
+/* ── CARDS ── */
+.card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px;margin-bottom:24px}
+
+/* ── TABLE ── */
+.data-table{width:100%;border-collapse:collapse;font-size:13px;background:var(--surface);border-radius:12px;overflow:hidden}
+.data-table th{text-align:left;padding:10px 14px;background:rgba(0,0,0,.2);color:var(--muted);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)}
+.data-table td{padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.04);vertical-align:middle}
+.data-table tr:hover td{background:rgba(255,255,255,.03)}
+.data-table tr:last-child td{border-bottom:none}
+
+/* ── BADGE ── */
+.badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600}
+.badge.active{background:rgba(52,211,153,.15);color:var(--green)}
+.badge.banned_7d{background:rgba(251,191,36,.15);color:var(--yellow)}
+.badge.banned_perm{background:rgba(239,68,68,.15);color:var(--red)}
+.badge.info{background:rgba(96,165,250,.15);color:var(--blue)}
+.badge.warning{background:rgba(251,191,36,.15);color:var(--yellow)}
+.badge.critical{background:rgba(239,68,68,.15);color:var(--red)}
+.badge.vip{background:rgba(251,191,36,.2);color:var(--yellow)}
+.badge.important{background:rgba(239,68,68,.15);color:var(--red)}
+.badge.urgent{background:rgba(168,85,247,.15);color:#c084fc}
+.badge.green{background:rgba(52,211,153,.15);color:var(--green)}
+.badge.red{background:rgba(239,68,68,.15);color:var(--red)}
+
+/* ── BUTTONS ── */
+.btn{padding:7px 16px;border-radius:8px;border:none;cursor:pointer;font-size:13px;font-weight:500;transition:opacity .2s}
+.btn:hover{opacity:.85}
+.btn-primary{background:linear-gradient(135deg,var(--primary),var(--primary2));color:#fff}
+.btn-danger{background:rgba(239,68,68,.15);color:var(--red);border:1px solid rgba(239,68,68,.3)}
+.btn-success{background:rgba(52,211,153,.15);color:var(--green);border:1px solid rgba(52,211,153,.3)}
+.btn-warning{background:rgba(251,191,36,.15);color:var(--yellow);border:1px solid rgba(251,191,36,.3)}
+.btn-sm{padding:4px 10px;font-size:12px}
+.btn-xs{padding:2px 8px;font-size:11px}
+
+/* ── FORM ── */
+.form-group{margin-bottom:14px}
+.form-group label{display:block;color:var(--muted);font-size:12px;margin-bottom:6px}
+.form-control{padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-size:14px;width:100%;outline:none}
+.form-control:focus{border-color:var(--primary)}
+select.form-control{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%23aaa'%3E%3Cpath d='M6 8L1 3h10z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:32px}
+textarea.form-control{resize:vertical;min-height:80px}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+
+/* ── MODAL ── */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);backdrop-filter:blur(4px);z-index:200;display:none;align-items:center;justify-content:center}
+.modal-overlay.show{display:flex}
+.modal{background:#1a1d27;border:1px solid var(--border);border-radius:16px;padding:28px;width:560px;max-width:95vw;max-height:85vh;overflow-y:auto;animation:slideIn .2s}
+.modal.wide{width:760px}
+.modal h2{font-size:17px;margin-bottom:20px;padding-bottom:12px;border-bottom:1px solid var(--border)}
+.modal h3{font-size:14px;color:var(--muted);margin:16px 0 10px}
+.modal .actions{display:flex;gap:10px;justify-content:flex-end;margin-top:20px;padding-top:16px;border-top:1px solid var(--border)}
+@keyframes slideIn{from{opacity:0;transform:translateY(-12px)}to{opacity:1;transform:translateY(0)}}
+
+/* ── TOAST ── */
+.toast{position:fixed;bottom:24px;right:24px;padding:12px 20px;border-radius:10px;font-size:14px;z-index:300;animation:fadeUp .3s}
+.toast.ok{background:rgba(52,211,153,.15);color:var(--green);border:1px solid rgba(52,211,153,.3)}
+.toast.err{background:rgba(239,68,68,.15);color:var(--red);border:1px solid rgba(239,68,68,.3)}
+@keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+
+/* ── CHART CONTAINER ── */
+.chart-container{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:20px}
+.chart-title{font-size:13px;color:var(--muted);margin-bottom:16px;text-transform:uppercase;letter-spacing:.5px}
+.chart-placeholder{height:200px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px}
+
+/* ── GRID LAYOUT ── */
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px}
+@media(max-width:900px){.grid2,.grid3{grid-template-columns:1fr}}
+
+/* ── CONFIG LIST ── */
+.config-item{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid rgba(255,255,255,.04)}
+.config-item .key{flex:0 0 180px;font-weight:600;font-size:13px;color:var(--blue)}
+.config-item .val{flex:1}
+.config-item input{flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);font-size:13px;outline:none}
+.config-item input:focus{border-color:var(--primary)}
+.config-item .type{font-size:11px;padding:2px 8px;border-radius:20px;background:var(--surface);color:var(--muted)}
+
+/* ── PLAYER DETAIL ── */
+.player-detail{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:200;overflow-y:auto}
+.player-detail.show{display:block}
+.player-inner{background:#1a1d27;border:1px solid var(--border);border-radius:16px;padding:28px;width:800px;max-width:95vw;margin:40px auto;animation:slideIn .2s}
+.pd-header{display:flex;gap:20px;align-items:center;margin-bottom:20px}
+.pd-avatar{width:60px;height:60px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary2));display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0}
+.pd-info h2{font-size:20px;margin-bottom:4px}
+.pd-info .meta{color:var(--muted);font-size:12px;display:flex;gap:12px}
+.pd-close{background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;margin-left:auto;padding:8px}
+.pd-close:hover{color:var(--text)}
+.pd-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:20px 0}
+.pd-stat{background:var(--surface);border-radius:10px;padding:14px;text-align:center}
+.pd-stat .lbl{color:var(--muted);font-size:11px;margin-bottom:6px}
+.pd-stat .val{font-size:22px;font-weight:700}
+
+/* ── MAIL ITEMS ── */
+.mail-items{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.mail-item-tag{display:inline-block;padding:3px 10px;background:var(--surface2);border-radius:20px;font-size:12px}
+
+/* ── PANEL SPECIFIC ── */
+.quick-actions{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+.empty-state{text-align:center;padding:48px;color:var(--muted);font-size:14px}
+.empty-state .icon{font-size:40px;margin-bottom:12px;opacity:.4}
+
+/* ── LOGIN PAGE ── */
+#login-page{display:flex;align-items:center;justify-content:center;min-height:100vh}
+</style>
+</head>
+<body>
+
+<!-- TOPBAR -->
+<div class="topbar">
+  <div class="logo">🎮 GameVault <span style="font-weight:400;font-size:13px;opacity:.7">GM 管理后台</span></div>
+  <div class="actions">
+    <span class="badge" id="online-badge">🟢 实时在线: —</span>
+    <span class="badge" id="server-time"></span>
+    <form method="post" action="/logout" style="display:inline">
+      <button class="badge" type="submit">退出</button>
+    </form>
+  </div>
+</div>
+
+<!-- STATS ROW -->
+<div class="stats-row" id="stats-row">
+  <div class="stat-card green"><div class="lbl">总玩家</div><div class="val" id="stat-total">—</div></div>
+  <div class="stat-card yellow"><div class="lbl">VIP 玩家</div><div class="val" id="stat-vip">—</div></div>
+  <div class="stat-card red"><div class="lbl">封禁玩家</div><div class="val" id="stat-banned">—</div></div>
+  <div class="stat-card blue"><div class="lbl">今日充值</div><div class="val" id="stat-recharge">—</div></div>
+  <div class="stat-card pink"><div class="lbl">活跃活动</div><div class="val" id="stat-events">—</div></div>
+  <div class="stat-card orange"><div class="lbl">待处理告警</div><div class="val" id="stat-alerts">—</div></div>
+</div>
+
+<!-- TABS -->
+<div class="tabs">
+  <div class="tab active" onclick="showPanel('dashboard')">📊 数据大盘</div>
+  <div class="tab" onclick="showPanel('players')">👥 玩家管理</div>
+  <div class="tab" onclick="showPanel('mails')">📧 邮件系统</div>
+  <div class="tab" onclick="showPanel('server')">🌐 服务器</div>
+  <div class="tab" onclick="showPanel('config')">⚙️ 游戏配置</div>
+  <div class="tab" onclick="showPanel('mall')">🛒 商城活动</div>
+  <div class="tab" onclick="showPanel('alerts')">🔔 告警日志</div>
+</div>
+
+<!-- MAIN -->
+<div class="main">
+
+<!-- ══ DASHBOARD ══ -->
+<div class="panel active" id="panel-dashboard">
+  <div class="section-title">📊 实时数据</div>
+  <div class="grid2" style="margin-bottom:20px">
+    <div class="chart-container">
+      <div class="chart-title">DAU 趋势（近14天）</div>
+      <canvas id="dauChart" height="160"></canvas>
+    </div>
+    <div class="chart-container">
+      <div class="chart-title">充值趋势（近14天）</div>
+      <canvas id="rechargeChart" height="160"></canvas>
+    </div>
+  </div>
+  <div class="chart-container">
+    <div class="chart-title">关键指标</div>
+    <div class="grid3" style="gap:20px">
+      <div class="pd-stat"><div class="lbl">总充值金额</div><div class="val" id="dash-total-recharge" style="color:var(--yellow)">—</div></div>
+      <div class="pd-stat"><div class="lbl">平均等级</div><div class="val" id="dash-avg-level" style="color:var(--blue)">—</div></div>
+      <div class="pd-stat"><div class="lbl">累计登录次数</div><div class="val" id="dash-total-logins" style="color:var(--green)">—</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ PLAYERS ══ -->
+<div class="panel" id="panel-players">
+  <div class="section-title">👥 玩家管理</div>
+  <div class="search-bar">
+    <input id="player-search" placeholder="输入 UID / 昵称 / 用户名 搜索..." onkeyup="if(event.key==='Enter')searchPlayers()">
+    <button class="btn btn-primary" onclick="searchPlayers()">🔍 搜索</button>
+    <button class="btn btn-success" onclick="openModal('modal-create-player')">+ 添加玩家</button>
+  </div>
+  <div style="overflow-x:auto">
+    <table class="data-table" id="players-table">
+      <thead><tr>
+        <th>UID</th><th>昵称</th><th>等级</th><th>战力</th>
+        <th>金币</th><th>钻石</th><th>VIP</th><th>状态</th>
+        <th>最后登录</th><th>操作</th>
+      </tr></thead>
+      <tbody id="players-tbody"><tr><td colspan="10" class="empty-state">加载中...</td></tr></tbody>
+    </table>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;margin-top:14px">
+    <button class="btn btn-sm" onclick="loadPlayers(currentPlayerPage-1)" id="prev-btn" disabled>◀ 上一页</button>
+    <span id="player-pagination" style="font-size:13px;color:var(--muted)"></span>
+    <button class="btn btn-sm" onclick="loadPlayers(currentPlayerPage+1)" id="next-btn">下一页 ▶</button>
+  </div>
+</div>
+
+<!-- ══ MAILS ══ -->
+<div class="panel" id="panel-mails">
+  <div class="section-title">📧 邮件系统</div>
+  <div class="quick-actions">
+    <button class="btn btn-primary" onclick="openModal('modal-send-mail')">📤 发送邮件</button>
+    <button class="btn btn-warning" onclick="openModal('modal-batch-mail')">📦 批量邮件</button>
+    <button class="btn btn-success" onclick="loadMails()">🔄 刷新</button>
+  </div>
+  <div style="overflow-x:auto">
+    <table class="data-table">
+      <thead><tr><th>ID</th><th>标题</th><th>发送者</th><th>类型</th><th>道具</th><th>状态</th><th>发送时间</th><th>操作</th></tr></thead>
+      <tbody id="mails-tbody"><tr><td colspan="8" class="empty-state">加载中...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══ SERVER ══ -->
+<div class="panel" id="panel-server">
+  <div class="section-title">🌐 服务器资源管理</div>
+  <div class="grid2">
+    <div>
+      <div class="card-grid" style="grid-template-columns:1fr">
+        <div class="section-title" style="margin-top:16px">📢 全服公告</div>
+      </div>
+      <button class="btn btn-primary" style="margin-bottom:14px" onclick="openModal('modal-announcement')">+ 新建公告</button>
+      <div style="overflow-x:auto">
+        <table class="data-table">
+          <thead><tr><th>标题</th><th>优先级</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody id="announcements-tbody"><tr><td colspan="4" class="empty-state">加载中...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    <div>
+      <div class="section-title" style="margin-top:16px">🎯 商城 Banner</div>
+      <button class="btn btn-primary" style="margin-bottom:14px" onclick="openModal('modal-banner')">+ 添加 Banner</button>
+      <div style="overflow-x:auto">
+        <table class="data-table">
+          <thead><tr><th>标题</th><th>图片</th><th>排序</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody id="banners-tbody"><tr><td colspan="5" class="empty-state">加载中...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ CONFIG ══ -->
+<div class="panel" id="panel-config">
+  <div class="section-title">⚙️ 游戏热配置</div>
+  <div class="quick-actions">
+    <button class="btn btn-primary" onclick="openModal('modal-whitelist')">👤 白名单管理</button>
+    <button class="btn btn-warning" onclick="openModal('modal-drop-table')">🎲 掉落表配置</button>
+    <button class="btn btn-success" onclick="loadConfig()">🔄 刷新配置</button>
+  </div>
+  <div class="chart-container">
+    <div class="chart-title">⚡ 运行时配置（修改后实时生效）</div>
+    <div id="config-list"></div>
+  </div>
+</div>
+
+<!-- ══ MALL & EVENTS ══ -->
+<div class="panel" id="panel-mall">
+  <div class="grid2">
+    <div>
+      <div class="section-title">🛒 商城道具</div>
+      <button class="btn btn-primary" style="margin-bottom:14px" onclick="openModal('modal-mall-item')">+ 添加道具</button>
+      <div style="overflow-x:auto">
+        <table class="data-table">
+          <thead><tr><th>ID</th><th>名称</th><th>价格</th><th>分类</th><th>库存</th><th>状态</th></tr></thead>
+          <tbody id="mall-tbody"><tr><td colspan="6" class="empty-state">加载中...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    <div>
+      <div class="section-title">🎁 活动配置</div>
+      <button class="btn btn-primary" style="margin-bottom:14px" onclick="openModal('modal-event')">+ 新建活动</button>
+      <div style="overflow-x:auto">
+        <table class="data-table">
+          <thead><tr><th>活动名</th><th>类型</th><th>时间</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody id="events-tbody"><tr><td colspan="5" class="empty-state">加载中...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ ALERTS ══ -->
+<div class="panel" id="panel-alerts">
+  <div class="section-title">🔔 告警日志</div>
+  <div style="overflow-x:auto">
+    <table class="data-table">
+      <thead><tr><th>级别</th><th>类型</th><th>消息</th><th>时间</th><th>状态</th><th>操作</th></tr></thead>
+      <tbody id="alerts-tbody"><tr><td colspan="6" class="empty-state">加载中...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+</div><!-- /main -->
+
+<!-- ══ MODALS ══ -->
+
+<!-- PLAYER DETAIL MODAL -->
+<div class="player-detail" id="player-detail">
+  <div class="player-inner">
+    <div class="pd-header">
+      <div class="pd-avatar" id="pd-avatar">🎮</div>
+      <div class="pd-info">
+        <h2 id="pd-nickname">—</h2>
+        <div class="meta">
+          <span id="pd-uid">UID: —</span>
+          <span id="pd-username">账号: —</span>
+          <span class="badge" id="pd-status-badge">正常</span>
+          <span class="badge vip" id="pd-vip-badge" style="display:none">VIP</span>
+        </div>
+      </div>
+      <button class="pd-close" onclick="closePlayerDetail()">✕</button>
+    </div>
+    <div class="pd-stats">
+      <div class="pd-stat"><div class="lbl">等级</div><div class="val" id="pd-level">—</div></div>
+      <div class="pd-stat"><div class="lbl">战力</div><div class="val" id="pd-cp">—</div></div>
+      <div class="pd-stat"><div class="lbl">金币</div><div class="val" style="color:var(--yellow)" id="pd-coins">—</div></div>
+      <div class="pd-stat"><div class="lbl">钻石</div><div class="val" style="color:var(--blue)" id="pd-diamonds">—</div></div>
+    </div>
+    <div class="grid2" style="margin-bottom:16px">
+      <div class="pd-stat"><div class="lbl">累计充值</div><div class="val" style="color:var(--green)" id="pd-recharge">—</div></div>
+      <div class="pd-stat"><div class="lbl">登录次数</div><div class="val" id="pd-logins">—</div></div>
+    </div>
+
+    <!-- TABS IN DETAIL -->
+    <div class="tabs" style="margin:0 -28px;padding:0 28px">
+      <div class="tab active" onclick="showPdTab('items')">🎒 道具</div>
+      <div class="tab" onclick="showPdTab('recharges')">💳 充值记录</div>
+      <div class="tab" onclick="showPdTab('logins')">🔐 登录日志</div>
+      <div class="tab" onclick="showPdTab('actions')">⚡ 操作</div>
+    </div>
+    <div style="padding-top:16px" id="pd-content"></div>
+  </div>
+</div>
+
+<!-- SEND MAIL MODAL -->
+<div class="modal-overlay" id="modal-send-mail">
+  <div class="modal wide">
+    <h2>📤 发送邮件（单发 / 全服）</h2>
+    <form onsubmit="return sendMail(event)">
+      <div class="form-row">
+        <div class="form-group"><label>邮件标题</label><input class="form-control" name="title" placeholder="请输入邮件标题" required></div>
+        <div class="form-group"><label>发送者</label><input class="form-control" name="sender" value="系统" placeholder="发送者名称"></div>
+      </div>
+      <div class="form-group"><label>邮件内容</label><textarea class="form-control" name="content" placeholder="请输入邮件正文" required></textarea></div>
+      <div class="form-group"><label>附件道具（JSON，例：[{"id":"item_001","name":"金币","count":100}]）</label>
+        <input class="form-control" name="items_json" value='[]' placeholder='[{"id":"item_001","name":"金币","count":100}]'></div>
+      <div class="form-row">
+        <div class="form-group"><label>发送范围</label>
+          <select class="form-control" name="is_all" onchange="toggleTargetUids(this.value)">
+            <option value="1">🌐 全服发送</option><option value="0">👤 指定玩家</option>
+          </select></div>
+        <div class="form-group" id="target-uids-group" style="display:none"><label>玩家 UID（逗号分隔）</label>
+          <input class="form-control" name="target_uids" placeholder="p001,p002,p003"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>有效期（天）</label><input class="form-control" name="expire_days" value="7" type="number" min="1" max="90"></div>
+      </div>
+      <div class="actions">
+        <button type="button" class="btn btn-sm" onclick="closeModal('modal-send-mail')">取消</button>
+        <button type="button" class="btn btn-warning" onclick="saveMailDraft()">💾 保存草稿</button>
+        <button type="submit" class="btn btn-primary">📤 立即发送</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- BATCH MAIL MODAL -->
+<div class="modal-overlay" id="modal-batch-mail">
+  <div class="modal wide">
+    <h2>📦 批量邮件上传</h2>
+    <p style="color:var(--muted);font-size:13px;margin-bottom:16px">上传 CSV 文件，每行格式：uid,标题,内容,发送者,道具JSON</p>
+    <textarea class="form-control" id="batch-csv" rows="8" placeholder="p001,开服奖励,恭喜获得新手礼包！,系统,[{&quot;id&quot;:&quot;item_001&quot;,&quot;name&quot;:&quot;金币&quot;,&quot;count&quot;:100}]
+p002,开服奖励,恭喜获得新手礼包！,系统,[{&quot;id&quot;:&quot;item_002&quot;,&quot;name&quot;:&quot;钻石&quot;,&quot;count&quot;:50}]"></textarea>
+    <div class="actions">
+      <button type="button" class="btn btn-sm" onclick="closeModal('modal-batch-mail')">取消</button>
+      <button type="button" class="btn btn-primary" onclick="sendBatchMail()">📤 批量发送</button>
+    </div>
+  </div>
+</div>
+
+<!-- ANNOUNCEMENT MODAL -->
+<div class="modal-overlay" id="modal-announcement">
+  <div class="modal">
+    <h2>📢 新建全服公告</h2>
+    <form onsubmit="return createAnnouncement(event)">
+      <div class="form-group"><label>公告标题</label><input class="form-control" name="title" required></div>
+      <div class="form-group"><label>公告内容</label><textarea class="form-control" name="content" required></textarea></div>
+      <div class="form-row">
+        <div class="form-group"><label>优先级</label><select class="form-control" name="priority">
+          <option value="normal">普通</option><option value="important">重要</option><option value="urgent">紧急</option>
+        </select></div>
+        <div class="form-group"><label>配图 URL</label><input class="form-control" name="img_url" placeholder="https://..."></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>开始时间（时间戳）</label><input class="form-control" name="start_at" value="0" type="number"></div>
+        <div class="form-group"><label>结束时间（时间戳）</label><input class="form-control" name="end_at" value="0" type="number"></div>
+      </div>
+      <div class="actions">
+        <button type="button" class="btn btn-sm" onclick="closeModal('modal-announcement')">取消</button>
+        <button type="submit" class="btn btn-primary">发布</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- BANNER MODAL -->
+<div class="modal-overlay" id="modal-banner">
+  <div class="modal">
+    <h2>🎯 添加商城 Banner</h2>
+    <form onsubmit="return createBanner(event)">
+      <div class="form-group"><label>标题</label><input class="form-control" name="title" required></div>
+      <div class="form-group"><label>图片 URL</label><input class="form-control" name="img_url" placeholder="https://..." required></div>
+      <div class="form-group"><label>跳转链接</label><input class="form-control" name="link_url" placeholder="https://..."></div>
+      <div class="form-row">
+        <div class="form-group"><label>排序权重</label><input class="form-control" name="sort_order" value="0" type="number"></div>
+        <div class="form-group"><label>结束时间（时间戳）</label><input class="form-control" name="end_at" value="0" type="number"></div>
+      </div>
+      <div class="actions">
+        <button type="button" class="btn btn-sm" onclick="closeModal('modal-banner')">取消</button>
+        <button type="submit" class="btn btn-primary">添加</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- WHITELIST MODAL -->
+<div class="modal-overlay" id="modal-whitelist">
+  <div class="modal">
+    <h2>👤 白名单管理</h2>
+    <form onsubmit="return addWhitelist(event)" style="display:flex;gap:8px;margin-bottom:16px">
+      <input class="form-control" name="uid" placeholder="输入玩家 UID" required style="flex:1">
+      <select class="form-control" name="whitelist_type" style="flex:0 0 120px">
+        <option value="test">测试号</option><option value="channel">渠道号</option><option value="dev">开发号</option>
+      </select>
+      <input class="form-control" name="note" placeholder="备注" style="flex:1">
+      <button type="submit" class="btn btn-primary">添加</button>
+    </form>
+    <div style="overflow-x:auto">
+      <table class="data-table">
+        <thead><tr><th>UID</th><th>类型</th><th>备注</th><th>操作</th></tr></thead>
+        <tbody id="whitelist-tbody"><tr><td colspan="4" class="empty-state">加载中...</td></tr></tbody>
+      </table>
+    </div>
+    <div class="actions"><button type="button" class="btn btn-sm" onclick="closeModal('modal-whitelist')">关闭</button></div>
+  </div>
+</div>
+
+<!-- DROP TABLE MODAL -->
+<div class="modal-overlay" id="modal-drop-table">
+  <div class="modal wide">
+    <h2>🎲 掉落表配置</h2>
+    <p style="color:var(--muted);font-size:13px;margin-bottom:12px">JSON 格式：[{"item_id":"x","item_name":"装备A","weight":10,"min":1,"max":1}]</p>
+    <div id="drop-table-list" style="max-height:300px;overflow-y:auto;margin-bottom:12px"></div>
+    <div class="actions">
+      <button type="button" class="btn btn-sm" onclick="closeModal('modal-drop-table')">取消</button>
+      <button type="button" class="btn btn-primary" onclick="saveDropTables()">💾 保存全部</button>
+    </div>
+  </div>
+</div>
+
+<!-- MALL ITEM MODAL -->
+<div class="modal-overlay" id="modal-mall-item">
+  <div class="modal">
+    <h2>🛒 添加商城道具</h2>
+    <form onsubmit="return createMallItem(event)">
+      <div class="form-row">
+        <div class="form-group"><label>道具 ID</label><input class="form-control" name="item_id" required></div>
+        <div class="form-group"><label>道具名称</label><input class="form-control" name="name" required></div>
+      </div>
+      <div class="form-group"><label>描述</label><input class="form-control" name="desc"></div>
+      <div class="form-row">
+        <div class="form-group"><label>价格类型</label><select class="form-control" name="price_type">
+          <option value="coins">金币</option><option value="diamonds">钻石</option><option value="rmb">人民币</option>
+        </select></div>
+        <div class="form-group"><label>价格</label><input class="form-control" name="price" type="number" min="0" required></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>分类</label><select class="form-control" name="category">
+          <option value="item">道具</option><option value="weapon">武器</option><option value="skin">皮肤</option><option value="package">礼包</option>
+        </select></div>
+        <div class="form-group"><label>库存（-1=无限）</label><input class="form-control" name="stock" value="-1" type="number"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>排序</label><input class="form-control" name="sort_order" value="0" type="number"></div>
+        <div class="form-group"><label>状态</label><select class="form-control" name="is_active">
+          <option value="1">上架</option><option value="0">下架</option>
+        </select></div>
+      </div>
+      <div class="actions">
+        <button type="button" class="btn btn-sm" onclick="closeModal('modal-mall-item')">取消</button>
+        <button type="submit" class="btn btn-primary">保存</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- EVENT MODAL -->
+<div class="modal-overlay" id="modal-event">
+  <div class="modal wide">
+    <h2>🎁 新建活动</h2>
+    <form onsubmit="return createEvent(event)">
+      <div class="form-row">
+        <div class="form-group"><label>活动名称</label><input class="form-control" name="name" required></div>
+        <div class="form-group"><label>活动类型</label><select class="form-control" name="event_type">
+          <option value="limited">限时活动</option><option value="daily">每日活动</option><option value="weekly">每周活动</option><option value="permanent">常驻活动</option>
+        </select></div>
+      </div>
+      <div class="form-group"><label>活动描述</label><input class="form-control" name="desc"></div>
+      <div class="form-row">
+        <div class="form-group"><label>开始时间（时间戳）</label><input class="form-control" name="start_at" value="0" type="number"></div>
+        <div class="form-group"><label>结束时间（时间戳）</label><input class="form-control" name="end_at" value="0" type="number"></div>
+      </div>
+      <div class="form-group"><label>参与条件（JSON）</label>
+        <input class="form-control" name="conditions" value='{"min_level":1,"vip_only":false}'></div>
+      <div class="form-group"><label>奖励内容（JSON）</label>
+        <input class="form-control" name="rewards" value='[{"id":"item_001","name":"金币","count":100}]'></div>
+      <div class="actions">
+        <button type="button" class="btn btn-sm" onclick="closeModal('modal-event')">取消</button>
+        <button type="submit" class="btn btn-primary">创建</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- BAN MODAL -->
+<div class="modal-overlay" id="modal-ban">
+  <div class="modal">
+    <h2>🚫 封禁玩家</h2>
+    <p id="ban-player-name" style="color:var(--muted);margin-bottom:16px"></p>
+    <form onsubmit="return banPlayer(event)">
+      <div class="form-group"><label>封禁原因</label><input class="form-control" name="reason" placeholder="请输入封禁原因" required></div>
+      <div class="form-group"><label>封禁时长</label><select class="form-control" name="days" id="ban-days-select">
+        <option value="7">临时封禁 7 天</option><option value="30">临时封禁 30 天</option><option value="0">永久封禁</option>
+      </select></div>
+      <div class="actions">
+        <button type="button" class="btn btn-sm" onclick="closeModal('modal-ban')">取消</button>
+        <button type="submit" class="btn btn-danger">确认封禁</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- CURRENCY MODAL -->
+<div class="modal-overlay" id="modal-currency">
+  <div class="modal">
+    <h2>💰 调整货币</h2>
+    <p id="currency-player-name" style="color:var(--muted);margin-bottom:16px"></p>
+    <form onsubmit="return adjustCurrency(event)">
+      <div class="form-row">
+        <div class="form-group"><label>金币变化（+/-）</label><input class="form-control" name="coin_delta" type="number" value="0"></div>
+        <div class="form-group"><label>钻石变化（+/-）</label><input class="form-control" name="diamond_delta" type="number" value="0"></div>
+      </div>
+      <div class="form-group"><label>原因</label><input class="form-control" name="reason" placeholder="如：活动奖励、补偿、扣除"></div>
+      <div class="actions">
+        <button type="button" class="btn btn-sm" onclick="closeModal('modal-currency')">取消</button>
+        <button type="submit" class="btn btn-primary">确认调整</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ITEM MODAL -->
+<div class="modal-overlay" id="modal-item">
+  <div class="modal">
+    <h2>🎒 发放 / 回收道具</h2>
+    <p id="item-player-name" style="color:var(--muted);margin-bottom:16px"></p>
+    <form onsubmit="return manageItem(event)">
+      <div class="form-group"><label>操作</label><select class="form-control" name="action" id="item-action-select">
+        <option value="give">发放道具</option><option value="take">回收道具</option>
+      </select></div>
+      <div class="form-row">
+        <div class="form-group"><label>道具 ID</label><input class="form-control" name="item_id" required></div>
+        <div class="form-group"><label>道具名称</label><input class="form-control" name="item_name" placeholder="如：金币"></div>
+      </div>
+      <div class="form-group"><label>数量</label><input class="form-control" name="quantity" type="number" min="1" value="1" required></div>
+      <div class="actions">
+        <button type="button" class="btn btn-sm" onclick="closeModal('modal-item')">取消</button>
+        <button type="submit" class="btn btn-primary">确认</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- CREATE PLAYER MODAL -->
+<div class="modal-overlay" id="modal-create-player">
+  <div class="modal">
+    <h2>➕ 添加玩家</h2>
+    <form onsubmit="return createPlayer(event)">
+      <div class="form-group"><label>用户名</label><input class="form-control" name="username" required></div>
+      <div class="form-group"><label>昵称</label><input class="form-control" name="nickname" required></div>
+      <div class="actions">
+        <button type="button" class="btn btn-sm" onclick="closeModal('modal-create-player')">取消</button>
+        <button type="submit" class="btn btn-primary">创建</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- RENAME MODAL -->
+<div class="modal-overlay" id="modal-rename">
+  <div class="modal">
+    <h2>✏️ 修改昵称</h2>
+    <p id="rename-player-name" style="color:var(--muted);margin-bottom:16px"></p>
+    <form onsubmit="return renamePlayer(event)">
+      <div class="form-group"><label>新昵称</label><input class="form-control" name="new_nickname" maxlength="20" required></div>
+      <div class="actions">
+        <button type="button" class="btn btn-sm" onclick="closeModal('modal-rename')">取消</button>
+        <button type="submit" class="btn btn-primary">确认修改</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- RESET MODAL -->
+<div class="modal-overlay" id="modal-reset">
+  <div class="modal">
+    <h2>🔄 重置玩家进度</h2>
+    <p id="reset-player-name" style="color:var(--muted);margin-bottom:16px"></p>
+    <form onsubmit="return resetPlayer(event)">
+      <div class="form-group"><label>重置范围</label><select class="form-control" name="reset_type" id="reset-type-select">
+        <option value="progress">重置等级/战力</option><option value="items">清空道具</option><option value="all">全部重置（危险）</option>
+      </select></div>
+      <div class="actions">
+        <button type="button" class="btn btn-sm" onclick="closeModal('modal-reset')">取消</button>
+        <button type="submit" class="btn btn-danger">确认重置</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+// ════════════════════════════════════════════
+//  GLOBALS
+// ════════════════════════════════════════════
+let currentPlayerPage = 1;
+let currentPlayerUid = null;
+let currentPlayerData = null;
+const now = () => Math.floor(Date.now() / 1000);
+
+// ════════════════════════════════════════════
+//  INIT
+// ════════════════════════════════════════════
+document.addEventListener('DOMContentLoaded', () => {
+  loadDashboard();
+  loadPlayers(1);
+  loadMails();
+  loadAnnouncements();
+  loadBanners();
+  loadMall();
+  loadEvents();
+  loadAlerts();
+  loadConfig();
+  setInterval(loadRealtime, 30000);
+  loadRealtime();
+  updateTime();
+  setInterval(updateTime, 60000);
+});
+
+function updateTime() {
+  const now2 = new Date();
+  document.getElementById('server-time').textContent = now2.toLocaleString('zh-CN', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+}
+
+// ════════════════════════════════════════════
+//  NAVIGATION
+// ════════════════════════════════════════════
+function showPanel(name) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('panel-' + name).classList.add('active');
+  event.target.classList.add('active');
+}
+
+function showPdTab(tab) {
+  document.querySelectorAll('#player-detail .tab').forEach(t => t.classList.remove('active'));
+  event.target.classList.add('active');
+  renderPdTab(tab);
+}
+
+// ════════════════════════════════════════════
+//  API HELPERS
+// ════════════════════════════════════════════
+async function api(url, opts = {}) {
+  const r = await fetch(url, opts);
+  if (r.status === 302) return { ok: true, redirected: true };
+  if (r.status === 401) { toast('登录失效，请刷新页面', 'err'); return null; }
+  return r.json();
+}
+
+function toast(msg, type = 'ok') {
+  const t = document.createElement('div');
+  t.className = `toast ${type}`;
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 3000);
+}
+
+// ════════════════════════════════════════════
+//  MODALS
+// ════════════════════════════════════════════
+function openModal(id) { document.getElementById(id).classList.add('show'); }
+function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+function toggleTargetUids(val) {
+  document.getElementById('target-uids-group').style.display = val === '0' ? 'block' : 'none';
+}
+function closePlayerDetail() { document.getElementById('player-detail').classList.remove('show'); }
+
+// ════════════════════════════════════════════
+//  DASHBOARD
+// ════════════════════════════════════════════
+async function loadDashboard() {
+  const [stats, dau, realtime] = await Promise.all([
+    api('/api/dashboard/stats'),
+    api('/api/dashboard/dau?days=14'),
+    api('/api/dashboard/realtime')
+  ]);
+  if (!stats) return;
+  document.getElementById('stat-total').textContent = stats.total_players || 0;
+  document.getElementById('stat-vip').textContent = stats.vip_players || 0;
+  document.getElementById('stat-banned').textContent = stats.banned_players || 0;
+  document.getElementById('stat-recharge').textContent = (stats.today_recharge || 0) + ' 💰';
+  document.getElementById('stat-events').textContent = stats.active_events || 0;
+  document.getElementById('stat-alerts').textContent = stats.active_alerts || 0;
+  document.getElementById('dash-total-recharge').textContent = (stats.total_recharge || 0) + '';
+  document.getElementById('dash-avg-level').textContent = Math.round(stats.avg_level || 0);
+  document.getElementById('dash-total-logins').textContent = (stats.total_logins || 0) + '';
+  if (dau && dau.rows) drawCharts(dau.rows);
+}
+
+async function loadRealtime() {
+  const r = await api('/api/dashboard/realtime');
+  if (r) {
+    document.getElementById('online-badge').textContent = '🟢 实时在线: ' + r.online_now;
+  }
+}
+
+function drawCharts(rows) {
+  rows = rows.reverse();
+  const labels = rows.map(r => r.stat_date ? r.stat_date.slice(5) : '');
+  const dauData = rows.map(r => r.dau || 0);
+  const rechargeData = rows.map(r => r.recharge_amount || 0);
+  drawBar('dauChart', labels, [{label:'DAU', data:dauData, color:'#6366f1'}]);
+  drawBar('rechargeChart', labels, [{label:'充值金额', data:rechargeData, color:'#fbbf24'}]);
+}
+
+function drawBar(canvasId, labels, series) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.offsetWidth, H = canvas.height;
+  canvas.width = W; canvas.height = H;
+  const pad = {l:40, r:10, t:10, b:35};
+  const w = W - pad.l - pad.r, h = H - pad.t - pad.b;
+  ctx.clearRect(0,0,W,H);
+  const allData = series.flatMap(s => s.data);
+  const max = Math.max(...allData, 1);
+  const stepY = h / 4;
+  ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.t + stepY * i;
+    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(pad.l + w, y); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.font = '10px sans-serif'; ctx.textAlign = 'right';
+    ctx.fillText(Math.round(max * (4-i)/4), pad.l - 4, y + 3);
+  }
+  const barW = w / labels.length;
+  series.forEach(s => {
+    ctx.fillStyle = s.color || '#6366f1';
+    s.data.forEach((v, i) => {
+      const bh = (v / max) * h;
+      ctx.fillRect(pad.l + i * barW + 2, pad.t + h - bh, barW - 4, bh);
+    });
+  });
+  ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
+  labels.forEach((l, i) => { if (i % 2 === 0) ctx.fillText(l, pad.l + i * barW + barW/2, H - 5); });
+}
+
+// ════════════════════════════════════════════
+//  PLAYERS
+// ════════════════════════════════════════════
+async function loadPlayers(page) {
+  const q = document.getElementById('player-search').value;
+  const r = await api(`/api/players?q=${encodeURIComponent(q)}&page=${page}&size=20`);
+  if (!r) return;
+  currentPlayerPage = r.page;
+  const tbody = document.getElementById('players-tbody');
+  if (!r.rows || r.rows.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="10" class="empty-state">暂无玩家数据</td></tr>';
+    return;
+  }
+  tbody.innerHTML = r.rows.map(p => `
+    <tr>
+      <td><code style="font-size:12px">${p.uid}</code></td>
+      <td>${p.nickname || p.username}</td>
+      <td>Lv.${p.level}</td>
+      <td style="color:var(--pink)">${p.combat_power || 0}</td>
+      <td style="color:var(--yellow)">${p.coins || 0}</td>
+      <td style="color:var(--blue)">${p.diamonds || 0}</td>
+      <td>${p.is_vip ? '<span class="badge vip">VIP</span>' : '—'}</td>
+      <td><span class="badge ${p.status}">${statusLabel(p.status)}</span></td>
+      <td>${p.last_login_at ? timeAgo(p.last_login_at) : '从未'}</td>
+      <td>
+        <button class="btn btn-xs btn-primary" onclick="openPlayer('${p.uid}')">详情</button>
+        ${p.status !== 'active' ? `<button class="btn btn-xs btn-success" onclick="unbanPlayer('${p.uid}')">解封</button>` : `<button class="btn btn-xs btn-danger" onclick="openBanModal('${p.uid}','${p.nickname}')">封禁</button>`}
+      </td>
+    </tr>`).join('');
+  document.getElementById('player-pagination').textContent = `第 ${r.page} / ${Math.ceil(r.total/20)} 页，共 ${r.total} 人`;
+  document.getElementById('prev-btn').disabled = r.page <= 1;
+  document.getElementById('next-btn').disabled = r.page >= Math.ceil(r.total/20);
+}
+
+function searchPlayers() { loadPlayers(1); }
+
+async function openPlayer(uid) {
+  currentPlayerUid = uid;
+  const r = await api(`/api/players/${uid}`);
+  if (!r) return;
+  currentPlayerData = r;
+  const p = r.player;
+  document.getElementById('pd-avatar').textContent = (p.nickname || p.username || '?')[0];
+  document.getElementById('pd-nickname').textContent = p.nickname || p.username || '—';
+  document.getElementById('pd-uid').textContent = 'UID: ' + p.uid;
+  document.getElementById('pd-username').textContent = '账号: ' + p.username;
+  document.getElementById('pd-level').textContent = p.level;
+  document.getElementById('pd-cp').textContent = p.combat_power || 0;
+  document.getElementById('pd-coins').textContent = p.coins || 0;
+  document.getElementById('pd-diamonds').textContent = p.diamonds || 0;
+  document.getElementById('pd-recharge').textContent = p.recharge_total || 0;
+  document.getElementById('pd-logins').textContent = p.login_count || 0;
+  const sb = document.getElementById('pd-status-badge');
+  sb.className = 'badge ' + p.status;
+  sb.textContent = statusLabel(p.status);
+  document.getElementById('pd-vip-badge').style.display = p.is_vip ? 'inline-block' : 'none';
+  document.querySelector('#player-detail .tab').click();
+  document.getElementById('player-detail').classList.add('show');
+  renderPdTab('items');
+}
+
+function renderPdTab(tab) {
+  const p = currentPlayerData;
+  if (!p) return;
+  const el = document.getElementById('pd-content');
+  if (tab === 'items') {
+    const items = p.items || [];
+    el.innerHTML = `
+      <div style="display:flex;gap:8px;margin-bottom:14px">
+        <button class="btn btn-primary btn-sm" onclick="openItemModal('${p.player.uid}','${p.player.nickname}','give')">+ 发放道具</button>
+        <button class="btn btn-danger btn-sm" onclick="openItemModal('${p.player.uid}','${p.player.nickname}','take')">- 回收道具</button>
+      </div>
+      ${items.length === 0 ? '<div class="empty-state">暂无道具</div>' : `
+      <table class="data-table"><thead><tr><th>道具ID</th><th>名称</th><th>数量</th><th>获得时间</th></tr></thead>
+      <tbody>${items.map(i => `<tr><td>${i.item_id}</td><td>${i.item_name}</td><td>×${i.quantity}</td><td>${timeAgo(i.acquired_at)}</td></tr>`).join('')}</tbody></table>`}`;
+  } else if (tab === 'recharges') {
+    const rc = p.recharges || [];
+    el.innerHTML = rc.length === 0 ? '<div class="empty-state">暂无充值记录</div>' : `
+      <table class="data-table"><thead><tr><th>订单号</th><th>金额</th><th>状态</th><th>付费时间</th></tr></thead>
+      <tbody>${rc.map(r => `<tr><td><code>${r.order_id || '—'}</code></td><td>${r.amount}</td><td><span class="badge ${r.status}">${r.status}</span></td><td>${r.paid_at ? timeAgo(r.paid_at) : '—'}</td></tr>`).join('')}</tbody></table>`;
+  } else if (tab === 'logins') {
+    const lg = p.logins || [];
+    el.innerHTML = lg.length === 0 ? '<div class="empty-state">暂无登录日志</div>' : `
+      <table class="data-table"><thead><tr><th>IP</th><th>设备</th><th>登录时间</th></tr></thead>
+      <tbody>${lg.map(l => `<tr><td>${l.ip || '—'}</td><td>${l.device || '—'}</td><td>${l.login_at ? timeAgo(l.login_at) : '—'}</td></tr>`).join('')}</tbody></table>`;
+  } else if (tab === 'actions') {
+    el.innerHTML = `
+      <div class="grid2" style="gap:16px">
+        <button class="btn btn-warning" onclick="openCurrencyModal('${p.player.uid}','${p.player.nickname}')">💰 调整货币</button>
+        <button class="btn btn-primary" onclick="openRenameModal('${p.player.uid}','${p.player.nickname}')">✏️ 修改昵称</button>
+        <button class="btn btn-danger" onclick="openResetModal('${p.player.uid}','${p.player.nickname}')">🔄 重置进度</button>
+        <button class="btn btn-primary" onclick="openMailPlayer('${p.player.uid}','${p.player.nickname}')">📧 发送邮件</button>
+      </div>
+      <div style="margin-top:16px">
+        <h3>封禁记录</h3>
+        <p style="color:var(--muted);font-size:13px">当前状态: <span class="badge ${p.player.status}">${statusLabel(p.player.status)}</span></p>
+        ${p.player.status !== 'active' ? `<button class="btn btn-success" onclick="unbanPlayer('${p.player.uid}')">解除封禁</button>` : ''}
+      </div>`;
+  }
+}
+
+// ════════════════════════════════════════════
+//  PLAYER ACTIONS
+// ════════════════════════════════════════════
+async function unbanPlayer(uid) {
+  if (!confirm('确认解封该玩家？')) return;
+  const r = await api(`/api/players/${uid}/unban`, {method:'POST'});
+  if (r && r.ok) { toast('已解封'); loadPlayers(currentPlayerPage); closePlayerDetail(); }
+}
+
+function openBanModal(uid, nickname) {
+  document.getElementById('ban-player-name').textContent = `正在封禁：${nickname} (${uid})`;
+  document.getElementById('modal-ban').querySelector('form').onsubmit = (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    api(`/api/players/${uid}/ban`, {method:'POST', body: new URLSearchParams({reason: fd.get('reason'), days: fd.get('days')})}).then(r => {
+      if (r && r.ok) { toast('已封禁'); closeModal('modal-ban'); loadPlayers(currentPlayerPage); closePlayerDetail(); }
+    });
+  };
+  openModal('modal-ban');
+}
+
+function openCurrencyModal(uid, nickname) {
+  document.getElementById('currency-player-name').textContent = `玩家：${nickname}`;
+  document.getElementById('modal-currency').querySelector('form').onsubmit = (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    api(`/api/players/${uid}/currency`, {method:'POST', body: new URLSearchParams(fd)}).then(r => {
+      if (r && r.ok) { toast('货币已调整'); closeModal('modal-currency'); openPlayer(uid); }
+    });
+    return false;
+  };
+  openModal('modal-currency');
+}
+
+function openItemModal(uid, nickname, action) {
+  document.getElementById('item-player-name').textContent = `玩家：${nickname}`;
+  document.getElementById('item-action-select').value = action;
+  document.getElementById('modal-item').querySelector('form').onsubmit = (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    fd.set('action', action);
+    api(`/api/players/${uid}/items`, {method:'POST', body: new URLSearchParams(fd)}).then(r => {
+      if (r && r.ok) { toast('道具已' + (action === 'give' ? '发放' : '回收')); closeModal('modal-item'); openPlayer(uid); }
+    });
+    return false;
+  };
+  openModal('modal-item');
+}
+
+function openRenameModal(uid, nickname) {
+  document.getElementById('rename-player-name').textContent = `当前昵称：${nickname}`;
+  document.getElementById('modal-rename').querySelector('form').onsubmit = (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    api(`/api/players/${uid}/rename`, {method:'POST', body: new URLSearchParams(fd)}).then(r => {
+      if (r && r.ok) { toast('昵称已修改'); closeModal('modal-rename'); openPlayer(uid); }
+    });
+    return false;
+  };
+  openModal('modal-rename');
+}
+
+function openResetModal(uid, nickname) {
+  document.getElementById('reset-player-name').textContent = `玩家：${nickname}（此操作不可逆！）`;
+  document.getElementById('modal-reset').querySelector('form').onsubmit = (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    if (!confirm('确认重置？此操作不可逆！')) return;
+    api(`/api/players/${uid}/reset`, {method:'POST', body: new URLSearchParams(fd)}).then(r => {
+      if (r && r.ok) { toast('进度已重置'); closeModal('modal-reset'); openPlayer(uid); }
+    });
+    return false;
+  };
+  openModal('modal-reset');
+}
+
+async function createPlayer(e) {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const uid = 'p_' + Date.now();
+  // Create via currency=0 means just init in DB (simplified)
+  const r = await api(`/api/players/${uid}/currency`, {
+    method:'POST', body: new URLSearchParams({coin_delta:0, diamond_delta:0, reason:'添加玩家:'+fd.get('username')})
+  });
+  toast('玩家已添加');
+  closeModal('modal-create-player');
+  loadPlayers(1);
+  return false;
+}
+
+// ════════════════════════════════════════════
+//  MAILS
+// ════════════════════════════════════════════
+async function loadMails() {
+  const r = await api('/api/mails?size=50');
+  if (!r) return;
+  const tbody = document.getElementById('mails-tbody');
+  if (!r.rows || r.rows.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="8" class="empty-state">暂无邮件</td></tr>'; return;
+  }
+  tbody.innerHTML = r.rows.map(m => {
+    let items = [];
+    try { items = JSON.parse(m.items || '[]'); } catch(e) {}
+    return `<tr>
+      <td><code style="font-size:11px">${m.mail_id?.slice(0,12)}</code></td>
+      <td>${m.title}</td>
+      <td>${m.sender}</td>
+      <td>${m.is_all ? '<span class="badge info">全服</span>' : '<span class="badge">指定</span>'}</td>
+      <td>${items.length > 0 ? `<span class="badge">含附件</span>` : '无'}</td>
+      <td><span class="badge ${m.status}">${m.status === 'sent' ? '已发送' : m.status === 'draft' ? '草稿' : '已取消'}</span></td>
+      <td>${m.sent_at ? timeAgo(m.sent_at) : '—'}</td>
+      <td>
+        ${m.status === 'draft' ? `<button class="btn btn-xs btn-primary" onclick="sendMailById('${m.mail_id}')">发送</button>` : ''}
+        <button class="btn btn-xs btn-danger" onclick="deleteMail('${m.mail_id}')">删除</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function sendMail(e) {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const r = await api('/api/mails', {
+    method:'POST', body: new URLSearchParams(fd)
+  });
+  if (r && r.mail_id) {
+    await api(`/api/mails/${r.mail_id}/send`, {method:'POST'});
+    toast('邮件已发送');
+  }
+  closeModal('modal-send-mail');
+  loadMails();
+  return false;
+}
+
+async function saveMailDraft() {
+  const form = document.querySelector('#modal-send-mail form');
+  const fd = new FormData(form);
+  fd.set('is_all', '1');
+  await api('/api/mails', {method:'POST', body: new URLSearchParams(fd)});
+  toast('草稿已保存');
+  closeModal('modal-send-mail');
+  loadMails();
+}
+
+async function sendMailById(mail_id) {
+  const r = await api(`/api/mails/${mail_id}/send`, {method:'POST'});
+  if (r && r.ok) toast('邮件已发送');
+  loadMails();
+}
+
+async function deleteMail(mail_id) {
+  if (!confirm('确认删除？')) return;
+  const r = await api(`/api/mails/${mail_id}`, {method:'DELETE'});
+  if (r && r.ok) toast('已删除');
+  loadMails();
+}
+
+function openMailPlayer(uid, nickname) {
+  closePlayerDetail();
+  openModal('modal-send-mail');
+  document.querySelector('#modal-send-mail [name=title]').value = '';
+  document.querySelector('#modal-send-mail [name=content]').value = '';
+  toggleTargetUids('0');
+  document.getElementById('target-uids-group').style.display = 'block';
+  document.querySelector('#modal-send-mail [name=target_uids]').value = uid;
+}
+
+async function sendBatchMail() {
+  const csv = document.getElementById('batch-csv').value.trim();
+  if (!csv) { toast('请输入数据', 'err'); return; }
+  const lines = csv.split('\n').filter(l => l.trim());
+  let sent = 0;
+  for (const line of lines) {
+    const parts = line.split(',');
+    if (parts.length < 3) continue;
+    const [uid, title, content, sender = '系统', items = '[]'] = parts;
+    const r = await api('/api/mails', {
+      method:'POST', body: new URLSearchParams({title, content, sender, items_json: items, is_all:'0', target_uids: uid.trim(), expire_days:'7'})
+    });
+    if (r && r.mail_id) {
+      await api(`/api/mails/${r.mail_id}/send`, {method:'POST'});
+      sent++;
+    }
+  }
+  toast(`批量发送完成：${sent} 封`);
+  closeModal('modal-batch-mail');
+  loadMails();
+}
+
+// ════════════════════════════════════════════
+//  SERVER
+// ════════════════════════════════════════════
+async function loadAnnouncements() {
+  const r = await api('/api/announcements');
+  if (!r) return;
+  const tbody = document.getElementById('announcements-tbody');
+  if (!r.rows || r.rows.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty-state">暂无公告</td></tr>'; return;
+  }
+  tbody.innerHTML = r.rows.map(a => `<tr>
+    <td>${a.title}</td>
+    <td><span class="badge ${a.priority}">${a.priority === 'urgent' ? '紧急' : a.priority === 'important' ? '重要' : '普通'}</span></td>
+    <td><span class="badge ${a.status}">${a.status === 'active' ? '显示中' : '已隐藏'}</span></td>
+    <td><button class="btn btn-xs" onclick="toggleAnnouncement(${a.id})">${a.status === 'active' ? '隐藏' : '显示'}</button></td>
+  </tr>`).join('');
+}
+
+async function toggleAnnouncement(id) {
+  await api(`/api/announcements/${id}/toggle`, {method:'POST'});
+  loadAnnouncements();
+}
+
+async function createAnnouncement(e) {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const r = await api('/api/announcements', {method:'POST', body: new URLSearchParams(fd)});
+  if (r && r.ok) toast('公告已发布');
+  closeModal('modal-announcement');
+  loadAnnouncements();
+  return false;
+}
+
+async function loadBanners() {
+  const r = await api('/api/shop-banners');
+  if (!r) return;
+  const tbody = document.getElementById('banners-tbody');
+  if (!r.rows || r.rows.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty-state">暂无 Banner</td></tr>'; return;
+  }
+  tbody.innerHTML = r.rows.map(b => `<tr>
+    <td>${b.title}</td>
+    <td>${b.img_url ? `<a href="${b.img_url}" target="_blank" style="color:var(--blue)">查看</a>` : '—'}</td>
+    <td>${b.sort_order}</td>
+    <td><span class="badge ${b.status}">${b.status === 'active' ? '显示' : '隐藏'}</span></td>
+    <td><button class="btn btn-xs btn-danger" onclick="deleteBanner(${b.id})">删除</button></td>
+  </tr>`).join('');
+}
+
+async function createBanner(e) {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const r = await api('/api/shop-banners', {method:'POST', body: new URLSearchParams(fd)});
+  if (r && r.ok) toast('Banner 已添加');
+  closeModal('modal-banner');
+  loadBanners();
+  return false;
+}
+
+async function deleteBanner(id) {
+  // Simplified - toggle off
+  toast('请通过编辑功能管理 Banner');
+}
+
+// ════════════════════════════════════════════
+//  CONFIG
+// ════════════════════════════════════════════
+let configData = [];
+let whitelistData = [];
+let dropTableData = [];
+
+async function loadConfig() {
+  const [cfg, wl, drops] = await Promise.all([
+    api('/api/config'), api('/api/whitelist'), api('/api/drop-tables')
+  ]);
+  if (!cfg) return;
+  configData = cfg.rows || [];
+  whitelistData = wl ? (wl.rows || []) : [];
+  dropTableData = drops ? (drops.rows || []) : [];
+  renderConfig();
+  renderWhitelist();
+  renderDropTables();
+}
+
+function renderConfig() {
+  const el = document.getElementById('config-list');
+  el.innerHTML = configData.map(c => `
+    <div class="config-item">
+      <div class="key">${c.key}</div>
+      <div class="val">
+        ${c.type === 'bool' ? `
+          <select class="form-control" onchange="updateConfig('${c.key}', this.value)">
+            <option value="true" ${c.value === 'true' ? 'selected' : ''}>开启</option>
+            <option value="false" ${c.value === 'false' ? 'selected' : ''}>关闭</option>
+          </select>` :
+        c.type === 'int' ? `<input value="${c.value}" type="number" onchange="updateConfig('${c.key}', this.value)">` :
+        `<input value="${c.value}" onchange="updateConfig('${c.key}', this.value)">`}
+      </div>
+      <span class="type">${c.type}</span>
+      <span style="color:var(--muted);font-size:12px;flex:0 0 auto">${c.desc || ''}</span>
+    </div>`).join('');
+}
+
+async function updateConfig(key, value) {
+  const r = await api(`/api/config/${key}`, {method:'PUT', body: new URLSearchParams({value})});
+  if (r && r.ok) toast(`配置 ${key} 已更新`);
+}
+
+function renderWhitelist() {
+  const tbody = document.getElementById('whitelist-tbody');
+  if (!whitelistData.length) { tbody.innerHTML = '<tr><td colspan="4" class="empty-state">暂无白名单</td></tr>'; return; }
+  const typeMap = {test:'测试号',channel:'渠道号',dev:'开发号'};
+  tbody.innerHTML = whitelistData.map(w => `<tr>
+    <td><code>${w.uid}</code></td>
+    <td><span class="badge">${typeMap[w.whitelist_type] || w.whitelist_type}</span></td>
+    <td>${w.note || '—'}</td>
+    <td><button class="btn btn-xs btn-danger" onclick="delWhitelist('${w.uid}')">移除</button></td>
+  </tr>`).join('');
+}
+
+async function addWhitelist(e) {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const r = await api('/api/whitelist', {method:'POST', body: new URLSearchParams(fd)});
+  if (r && r.ok) {
+    toast('已添加到白名单');
+    e.target.reset();
+    const wl = await api('/api/whitelist');
+    whitelistData = wl ? (wl.rows || []) : [];
+    renderWhitelist();
+  }
+  return false;
+}
+
+async function delWhitelist(uid) {
+  const r = await api(`/api/whitelist/${uid}`, {method:'DELETE'});
+  if (r && r.ok) { toast('已移除'); whitelistData = whitelistData.filter(w => w.uid !== uid); renderWhitelist(); }
+}
+
+function renderDropTables() {
+  const el = document.getElementById('drop-table-list');
+  el.innerHTML = dropTableData.map(d => {
+    let items = [];
+    try { items = JSON.parse(d.items || '[]'); } catch(e) {}
+    return `<div style="margin-bottom:16px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <strong style="color:var(--primary)">${d.table_id}</strong>
+        <span style="color:var(--muted);font-size:12px">${d.name}</span>
+      </div>
+      <textarea class="form-control" id="drop-${d.table_id}" style="font-size:12px;min-height:80px">${d.items}</textarea>
+    </div>`;
+  }).join('');
+}
+
+async function saveDropTables() {
+  for (const d of dropTableData) {
+    const ta = document.getElementById(`drop-${d.table_id}`);
+    if (!ta) continue;
+    await api(`/api/drop-tables/${d.table_id}`, {method:'PUT', body: new URLSearchParams({items_json: ta.value})});
+  }
+  toast('掉落表已保存');
+  closeModal('modal-drop-table');
+}
+
+// ════════════════════════════════════════════
+//  MALL & EVENTS
+// ════════════════════════════════════════════
+async function loadMall() {
+  const r = await api('/api/mall-items');
+  if (!r) return;
+  const tbody = document.getElementById('mall-tbody');
+  if (!r.rows || r.rows.length === 0) { tbody.innerHTML = '<tr><td colspan="6" class="empty-state">暂无道具</td></tr>'; return; }
+  tbody.innerHTML = r.rows.map(m => `<tr>
+    <td><code>${m.item_id}</code></td><td>${m.name}</td>
+    <td>${m.price_type === 'rmb' ? '¥' : m.price_type === 'diamonds' ? '💎' : '🪙'}${m.price}</td>
+    <td>${m.category}</td>
+    <td>${m.stock < 0 ? '∞' : m.stock}</td>
+    <td><span class="badge ${m.is_active ? 'active' : 'red'}">${m.is_active ? '上架' : '下架'}</span></td>
+  </tr>`).join('');
+}
+
+async function createMallItem(e) {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const r = await api('/api/mall-items', {method:'POST', body: new URLSearchParams(fd)});
+  if (r && r.ok) toast('道具已保存');
+  closeModal('modal-mall-item');
+  loadMall();
+  return false;
+}
+
+async function loadEvents() {
+  const r = await api('/api/events');
+  if (!r) return;
+  const tbody = document.getElementById('events-tbody');
+  if (!r.rows || r.rows.length === 0) { tbody.innerHTML = '<tr><td colspan="5" class="empty-state">暂无活动</td></tr>'; return; }
+  const typeMap = {limited:'限时',daily:'每日',weekly:'每周',permanent:'常驻'};
+  tbody.innerHTML = r.rows.map(e => `<tr>
+    <td>${e.name}</td>
+    <td><span class="badge info">${typeMap[e.event_type] || e.event_type}</span></td>
+    <td>${e.start_at ? timeAgo(e.start_at) : '—'} ~ ${e.end_at ? timeAgo(e.end_at) : '—'}</td>
+    <td><span class="badge ${e.status === 'active' ? 'active' : 'info'}">${e.status === 'active' ? '进行中' : '草稿'}</span></td>
+    <td><button class="btn btn-xs" onclick="toggleEvent('${e.event_id}')">${e.status === 'active' ? '暂停' : '开启'}</button></td>
+  </tr>`).join('');
+}
+
+async function toggleEvent(event_id) {
+  await api(`/api/events/${event_id}/toggle`, {method:'POST'});
+  loadEvents();
+}
+
+async function createEvent(e) {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const r = await api('/api/events', {method:'POST', body: new URLSearchParams(fd)});
+  if (r && r.ok) toast('活动已创建');
+  closeModal('modal-event');
+  loadEvents();
+  return false;
+}
+
+// ════════════════════════════════════════════
+//  ALERTS
+// ════════════════════════════════════════════
+async function loadAlerts() {
+  const r = await api('/api/alerts?size=50');
+  if (!r) return;
+  const tbody = document.getElementById('alerts-tbody');
+  if (!r.rows || r.rows.length === 0) { tbody.innerHTML = '<tr><td colspan="6" class="empty-state">暂无告警</td></tr>'; return; }
+  tbody.innerHTML = r.rows.map(a => `<tr>
+    <td><span class="badge ${a.severity}">${severityLabel(a.severity)}</span></td>
+    <td><span class="badge info">${a.alert_type}</span></td>
+    <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.message}</td>
+    <td>${timeAgo(a.created_at)}</td>
+    <td><span class="badge ${a.resolved ? 'active' : 'warning'}">${a.resolved ? '已处理' : '待处理'}</span></td>
+    <td>${a.resolved ? '' : `<button class="btn btn-xs btn-success" onclick="resolveAlert(${a.id})">标记已处理</button>`}</td>
+  </tr>`).join('');
+}
+
+async function resolveAlert(id) {
+  const r = await api(`/api/alerts/${id}/resolve`, {method:'POST'});
+  if (r && r.ok) toast('已标记处理');
+  loadAlerts();
+}
+
+// ════════════════════════════════════════════
+//  UTILS
+// ════════════════════════════════════════════
+function statusLabel(s) {
+  if (s === 'active') return '正常';
+  if (s === 'banned_7d') return '临时封禁';
+  if (s === 'banned_perm') return '永久封禁';
+  return s || '正常';
+}
+
+function severityLabel(s) {
+  if (s === 'critical') return '紧急';
+  if (s === 'warning') return '警告';
+  return '通知';
+}
+
+function timeAgo(ts) {
+  if (!ts) return '—';
+  const diff = now() - parseInt(ts);
+  if (diff < 60) return '刚刚';
+  if (diff < 3600) return Math.floor(diff/60) + '分钟前';
+  if (diff < 86400) return Math.floor(diff/3600) + '小时前';
+  return new Date(parseInt(ts) * 1000).toLocaleDateString('zh-CN');
+}
+</script>
+</body></html>
