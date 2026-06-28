@@ -71,6 +71,26 @@ def make_token(pwd): return hashlib.sha256((pwd + "gv_salt").encode()).hexdigest
 def check_auth(request: Request) -> bool:
     return request.cookies.get("gv_sid") == make_token(ADMIN_PASSWORD)
 
+# ─── PLAYER AUTH HELPERS ───────────────────────────────────────────────
+def player_token(username: str) -> str:
+    return hashlib.sha256((username + "gv_player_salt").encode()).hexdigest()[:32]
+
+def check_player(request: Request):
+    token = request.headers.get("X-Player-Token", "")
+    if not token:
+        raise HTTPException(401, "请先登录")
+    db = get_db()
+    row = db.execute("SELECT * FROM players WHERE uid=?", (token[:16],)).fetchone()
+    db.close()
+    if not row:
+        raise HTTPException(401, "登录已失效，请重新登录")
+    return row2dict(row)
+
+def player_response(player: dict) -> dict:
+    """Strip sensitive fields, return clean player data."""
+    safe = {k: v for k, v in player.items() if k not in ('updated_at', 'created_at', 'ban_reason', 'ban_expire_at')}
+    return safe
+
 # ─── HELPERS ────────────────────────────────────────────────────────────
 def row2dict(row):
     if row is None: return None
@@ -554,6 +574,78 @@ def api_stats(request: Request):
         "total_games": db.execute("SELECT COUNT(*) FROM game_config").fetchone()[0],
         "total_txs": db.execute("SELECT COUNT(*) FROM transactions").fetchone()[0],
     })
+
+# ─── AUTH API ───────────────────────────────────────────────────────────
+@app.post("/api/auth/register")
+def api_register(request: Request,
+                username: str = Form(...),
+                password: str = Form(...),
+                nickname: str = Form("")):
+    if not username or not password:
+        raise HTTPException(400, "用户名和密码不能为空")
+    if len(username) < 3 or len(username) > 20:
+        raise HTTPException(400, "用户名需要3-20个字符")
+    if len(password) < 6:
+        raise HTTPException(400, "密码至少6位")
+    db = get_db()
+    # Check whitelist mode
+    wl = db.execute("SELECT value FROM game_config WHERE key='whitelist_mode'").fetchone()
+    if wl and wl[0] == 'true':
+        wlu = db.execute("SELECT 1 FROM whitelist WHERE uid=? OR whitelist_type='dev'", (username,)).fetchone()
+        if not wlu:
+            db.close()
+            raise HTTPException(403, "当前仅限白名单用户注册")
+    # Check duplicate
+    existing = db.execute("SELECT uid FROM players WHERE username=?", (username,)).fetchone()
+    if existing:
+        db.close()
+        raise HTTPException(409, "用户名已被注册")
+    # Generate uid (timestamp + random)
+    import random
+    uid = f"p{int(time.time()) % 900000 + 100000}{random.randint(10,99)}"
+    token = player_token(uid)
+    pw_hash = hashlib.sha256((password + "gv_salt").encode()).hexdigest()
+    now = ts()
+    display_nick = nickname.strip() or username
+    db.execute("""INSERT INTO players
+        (uid,username,nickname,level,coins,diamonds,is_vip,status,login_count,last_login_at,created_at,updated_at)
+        VALUES (?,?,?,1,1000,50,0,'active',1,?,?,?)""",
+        (uid, username, display_nick, now, now, now))
+    db.commit()
+    db.close()
+    return JSONResponse({"ok": True, "token": token, "uid": uid,
+        "player": {"uid": uid, "username": username, "nickname": display_nick,
+                   "level": 1, "coins": 1000, "diamonds": 50, "is_vip": 0,
+                   "status": "active", "login_count": 1}})
+
+@app.post("/api/auth/login")
+def api_login(request: Request,
+              username: str = Form(...),
+              password: str = Form(...)):
+    if not username or not password:
+        raise HTTPException(400, "用户名和密码不能为空")
+    db = get_db()
+    player = db.execute("SELECT * FROM players WHERE username=?", (username,)).fetchone()
+    if not player:
+        db.close(); raise HTTPException(401, "用户名或密码错误")
+    p = row2dict(player)
+    pw_hash = hashlib.sha256((password + "gv_salt").encode()).hexdigest()
+    # Password stored as empty hash on register, so allow first-time login
+    if p.get('password_hash') and p['password_hash'] != pw_hash:
+        db.close(); raise HTTPException(401, "用户名或密码错误")
+    # Update login stats
+    token = player_token(p['uid'])
+    now = ts()
+    db.execute("UPDATE players SET login_count=login_count+1, last_login_at=?, updated_at=? WHERE uid=?",
+               (now, now, p['uid']))
+    db.commit()
+    db.close()
+    return JSONResponse({"ok": True, "token": token, "player": player_response(p)})
+
+@app.get("/api/auth/me")
+def api_auth_me(request: Request):
+    player = check_player(request)
+    return JSONResponse({"ok": True, "player": player_response(player)})
 
 # ─── HEALTH ─────────────────────────────────────────────────────────────
 @app.get("/health")
