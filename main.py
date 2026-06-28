@@ -1,12 +1,9 @@
 """
-GameVault 管理后端 - FastAPI
-访问：http://localhost:8000/admin
+GameVault GM 管理后台 - FastAPI
+完整版 v2.0 | 5大模块
 """
-import os
-import sqlite3
-import hashlib
-import time
-import json
+import os, sqlite3, hashlib, time, json, random, string, re
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -18,8 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 # ─── CONFIG ────────────────────────────────────────────────────────────
 PORT = int(os.getenv("PORT", "8000"))
 DB_PATH = os.getenv("DB_PATH", "./gamevault.db")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
-COOKIE_SECRET = os.getenv("COOKIE_SECRET", "gv-secret-2024")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "gamevault2024")
 
 # ─── DATABASE ──────────────────────────────────────────────────────────
 def get_db():
@@ -29,376 +25,576 @@ def get_db():
 
 def init_db():
     db = get_db()
-    db.executescript("""
-        CREATE TABLE IF NOT EXISTS users (
-            uid TEXT PRIMARY KEY,
-            username TEXT UNIQUE NOT NULL,
-            password_hash TEXT DEFAULT '',
-            coins INTEGER DEFAULT 0,
-            is_vip INTEGER DEFAULT 0,
-            created_at INTEGER
-        );
-        CREATE TABLE IF NOT EXISTS transactions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            uid TEXT,
-            item TEXT,
-            amount INTEGER DEFAULT 0,
-            type TEXT,
-            ts INTEGER
-        );
-        CREATE TABLE IF NOT EXISTS games (
-            id TEXT PRIMARY KEY,
-            name TEXT,
-            description TEXT DEFAULT '',
-            file_path TEXT DEFAULT '',
-            is_vip INTEGER DEFAULT 0,
-            category TEXT DEFAULT '',
-            plays INTEGER DEFAULT 0,
-            created_at INTEGER
-        );
-        CREATE TABLE IF NOT EXISTS leaderboard (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            game_id TEXT,
-            uid TEXT,
-            username TEXT DEFAULT '',
-            score INTEGER DEFAULT 0,
-            ts INTEGER
-        );
-    """)
-    db.commit()
-
-    # Seed test data if empty
-    cur = db.execute("SELECT COUNT(*) FROM users")
+    schema = Path("schema.sql").read_text()
+    db.executescript(schema)
+    # Seed demo players
+    cur = db.execute("SELECT COUNT(*) FROM players")
     if cur.fetchone()[0] == 0:
         now = int(time.time())
-        db.executemany(
-            "INSERT OR IGNORE INTO users VALUES (?,?,?,?,?,?)",
-            [
-                ("u001","test_user","",100,0,now),
-                ("u002","vip_player","",500,1,now),
-                ("u003","game_master","",0,1,now),
-            ]
-        )
-        db.executemany(
-            "INSERT OR IGNORE INTO transactions (uid,item,amount,type,ts) VALUES (?,?,?,?,?)",
-            [
-                ("u001","金币充值",100,"deposit",now),
-                ("u002","VIP月卡",0,"purchase",now),
-                ("u001","游戏奖励",50,"reward",now),
-            ]
-        )
-        db.executemany(
-            "INSERT OR IGNORE INTO games VALUES (?,?,?,?,?,?,?,?)",
-            [
-                ("snake","贪吃蛇","经典贪吃蛇","games/snake.html",0,"休闲",128,now),
-                ("flappy","Flappy鸟","飞行闯关","games/flappy.html",1,"飞行",64,now),
-                ("2048","2048","益智合并","games/2048.html",0,"益智",256,now),
-                ("tetris","俄罗斯方块","经典方块","games/tetris.html",0,"经典",88,now),
-            ]
-        )
-        db.commit()
+        players = [
+            ("p001","花百万","花百万",50,12000,9850,5000,200,1,now+86400*30,"active","",0,1280,42,now,now),
+            ("p002","玩家张三","玩家张三",35,8000,6200,3000,100,0,0,"active","",0,380,18,now-3600,now),
+            ("p003","外挂侠","外挂侠",99,99999,99999,0,0,0,0,"banned_perm","检测到使用非法脚本",0,0,5,now-7200,now-7200),
+            ("p004","测试员A","测试员A",10,1000,1200,8000,500,1,now+86400*7,"active","",0,0,3,now-1800,now),
+            ("p005","氪金大佬","氪金大佬",78,45000,18500,10000,0,1,now+86400*90,"active","",0,9999,120,now-300,now),
+        ]
+        db.executemany("INSERT OR IGNORE INTO players VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", players)
+        # Seed items
+        items = [
+            ("p001","item_001","金币","+1000",now),
+            ("p001","item_002","钻石","+50",now),
+            ("p005","item_003","稀有剑","×1",now),
+        ]
+        db.executemany("INSERT OR IGNORE INTO player_items VALUES (NULL,?,?,?,?,?)", items)
+        # Seed stats
+        for i in range(14, 0, -1):
+            d = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
+            dau = random.randint(800, 1500)
+            db.execute("INSERT OR IGNORE INTO daily_stats VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (d, dau, random.randint(20,80), dau, random.randint(5,30), random.randint(200,2000),
+                 random.randint(50,120), random.randint(300,800), now))
+        # Seed alerts
+        alerts = [
+            ("recharge_anomaly","充值异常：p005单日充值超5000金币，疑似刷单","critical",now-300),
+            ("online_drop","在线人数骤降：过去1小时下降40%","warning",now-3600),
+            ("ban_action","自动封禁：外挂侠(p003)被系统检测封禁","info",now-7200),
+        ]
+        db.executemany("INSERT OR IGNORE INTO alert_log VALUES (NULL,?,?,?,0,?,0)", alerts)
+    db.commit()
     db.close()
 
-# ─── AUTH ──────────────────────────────────────────────────────────────
-def make_token(pwd: str) -> str:
-    return str(abs(hash(pwd + COOKIE_SECRET)) % 10**12)
+def ts(): return int(time.time())
 
+# ─── AUTH ──────────────────────────────────────────────────────────────
+def make_token(pwd): return hashlib.sha256((pwd + "gv_salt").encode()).hexdigest()[:32]
 def check_auth(request: Request) -> bool:
     return request.cookies.get("gv_sid") == make_token(ADMIN_PASSWORD)
 
+# ─── HELPERS ────────────────────────────────────────────────────────────
+def row2dict(row):
+    if row is None: return None
+    return dict(zip(row.keys(), row))
+
+def json_response(data): return JSONResponse(data)
+def html_response(html, status=200): return HTMLResponse(html, status_code=status)
+
 # ─── APP ────────────────────────────────────────────────────────────────
-app = FastAPI(title="GameVault Admin API")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app = FastAPI(title="GameVault GM", docs_url=None, redoc_url=None)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-# ─── LOGIN PAGE HTML ───────────────────────────────────────────────────
-LOGIN_HTML = """<!DOCTYPE html>
-<html lang="zh">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>GameVault 管理登录</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}body{min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#0f0c29,#302b63,#24243e);font-family:'Segoe UI',sans-serif}
-.card{background:rgba(255,255,255,.06);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.12);border-radius:20px;padding:48px 40px;width:380px;text-align:center}
-h1{color:#fff;margin-bottom:8px;font-size:28px}.sub{color:rgba(255,255,255,.5);margin-bottom:36px;font-size:14px}
-input{display:block;width:100%;padding:14px 16px;margin-bottom:16px;border:1px solid rgba(255,255,255,.15);border-radius:10px;background:rgba(255,255,255,.08);color:#fff;font-size:15px;outline:none;box-sizing:border-box}
-input:focus{border-color:#6366f1}input::placeholder{color:rgba(255,255,255,.35)}
-.btn{width:100%;padding:14px;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;border:none;border-radius:10px;font-size:16px;font-weight:600;cursor:pointer}
-.btn:hover{opacity:.88}.err{color:#f87171;margin-bottom:16px;font-size:13px;min-height:18px}
-</style></head>
-<body><div class="card">
-<h1>🎮 GameVault</h1><p class="sub">管理后台登录</p>
-<p class="err" id="err"></p>
-<form method="post" action="/login">
-<input name="password" type="password" placeholder="输入管理密码" required autocomplete="current-password">
-<button class="btn" type="submit">登 录</button>
-</form>
-</div></body></html>"""
-
-DASH_HTML = """<!DOCTYPE html>
-<html lang="zh">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>GameVault 管理后台</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Segoe UI',sans-serif;background:#0f0f1a;color:#e2e8f0;min-height:100vh}
-.top{background:linear-gradient(135deg,#6366f1,#8b5cf6);padding:18px 32px;display:flex;align-items:center;justify-content:space-between}
-.top h1{font-size:20px;color:#fff}.badge{background:rgba(255,255,255,.2);color:#fff;padding:4px 14px;border-radius:20px;font-size:13px;cursor:pointer;border:none}
-.main{padding:24px 32px;max-width:1200px;margin:0 auto}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:28px}
-.card{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:22px}
-.card .lbl{color:rgba(255,255,255,.4);font-size:12px;margin-bottom:6px;text-transform:uppercase}
-.card .val{font-size:34px;font-weight:700}
-.card.users .val{color:#34d399}.card.vip .val{color:#fbbf24}
-.card.games .val{color:#60a5fa}.card.tx .val{color:#f472b6}
-.section{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);border-radius:16px;padding:22px;margin-bottom:18px}
-.section h2{color:#fff;font-size:15px;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,.06)}
-table{width:100%%;border-collapse:collapse;font-size:14px}
-th{text-align:left;color:rgba(255,255,255,.4);font-weight:500;padding:8px 12px;border-bottom:1px solid rgba(255,255,255,.06)}
-td{padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.04)}
-tr:hover td{background:rgba(255,255,255,.03)}
-.vip-badge{display:inline-block;padding:2px 10px;border-radius:20px;font-size:12px;font-weight:600}
-.vip-badge.yes{background:rgba(251,191,36,.2);color:#fbbf24}
-.vip-badge.no{background:rgba(255,255,255,.07);color:rgba(255,255,255,.35)}
-.btn-d{background:#ef4444;color:#fff;border:none;padding:5px 12px;border-radius:8px;cursor:pointer;font-size:13px}
-.btn-d:hover{background:#dc2626}.btn-g{background:#22c55e;color:#fff;border:none;padding:5px 12px;border-radius:8px;cursor:pointer;font-size:13px}
-.coin{color:#fbbf24;font-weight:600}
-input.s{padding:8px 14px;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:rgba(255,255,255,.06);color:#fff;font-size:14px;width:220px}
-input.s::placeholder{color:rgba(255,255,255,.3)}.loading{color:rgba(255,255,255,.4);padding:20px}
-.msg{position:fixed;top:20px;right:20px;padding:12px 20px;border-radius:10px;font-size:14px;z-index:1000;animation:fade .3s}
-.msg.ok{background:#065f46;color:#6ee7b7}.msg.err{background:#7f1d1d;color:#fca5a5}
-@keyframes fade{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
-a.refresh{color:#60a5fa;text-decoration:none;font-size:13px;margin-left:12px}
-</style></head>
-<body>
-<div class="top">
-  <h1>🎮 GameVault 管理后台</h1>
-  <div style="display:flex;gap:10px">
-    <span class="badge">● 在线</span>
-    <form method="post" action="/logout" style="display:inline"><button class="badge" type="submit">退出</button></form>
-  </div>
-</div>
-<div class="main">
-  <div class="grid">
-    <div class="card users"><div class="lbl">用户总数</div><div class="val" id="s-users">-</div></div>
-    <div class="card vip"><div class="lbl">VIP用户</div><div class="val" id="s-vips">-</div></div>
-    <div class="card games"><div class="lbl">收录游戏</div><div class="val" id="s-games">-</div></div>
-    <div class="card tx"><div class="lbl">交易记录</div><div class="val" id="s-txs">-</div></div>
-  </div>
-  <div class="section">
-    <h2>👥 用户管理<a href="javascript:loadUsers()" class="refresh">↻</a>
-      <input class="s" placeholder="搜索用户名..." id="q" oninput="loadUsers()" style="float:right"></h2>
-    <div id="user-tbl"><div class="loading">加载中...</div></div>
-  </div>
-  <div class="section">
-    <h2>📊 交易记录<a href="javascript:loadTxs()" class="refresh">↻</a></h2>
-    <div id="tx-tbl"><div class="loading">加载中...</div></div>
-  </div>
-</div>
-<script>
-async function api(url, opts={}) {
-  const r = await fetch(url, {...opts, credentials:'same-origin'});
-  if(r.status===401) { location.href='/admin'; return null; }
-  if(!r.ok && r.status!==200) throw new Error(r.status);
-  return r;
-}
-function msg(t,type='ok'){
-  const el=document.createElement('div'); el.className='msg '+type; el.textContent=t;
-  document.body.appendChild(el); setTimeout(()=>el.remove(),3000);
-}
-async function loadStats(){
-  const r=await api('/api/stats'); if(!r)return;
-  const d=await r.json();
-  document.getElementById('s-users').textContent=d.users;
-  document.getElementById('s-vips').textContent=d.vips;
-  document.getElementById('s-games').textContent=d.games;
-  document.getElementById('s-txs').textContent=d.txs;
-}
-async function loadUsers(){
-  const q=encodeURIComponent(document.getElementById('q').value||'');
-  const el=document.getElementById('user-tbl');
-  el.innerHTML='<div class="loading">加载中...</div>';
-  const r=await api('/api/users?q='+q); if(!r)return;
-  el.innerHTML=await r.text();
-}
-async function loadTxs(){
-  const el=document.getElementById('tx-tbl');
-  el.innerHTML='<div class="loading">加载中...</div>';
-  const r=await api('/api/transactions'); if(!r)return;
-  el.innerHTML=await r.text();
-}
-async function toggleVip(uid){
-  try{
-    await api('/api/users/vip?uid='+uid,{method:'POST'});
-    msg('操作成功'); loadUsers(); loadStats();
-  }catch(e){ msg('操作失败','err'); }
-}
-async function deleteUser(uid){
-  if(!confirm('确定删除该用户?'))return;
-  try{
-    await api('/api/users/delete?uid='+uid,{method:'POST'});
-    msg('已删除'); loadUsers(); loadStats();
-  }catch(e){ msg('删除失败','err'); }
-}
-loadStats(); loadUsers(); loadTxs();
-</script>
-</body></html>"""
-
-def render_users(rows):
-    if not rows:
-        return '<p style="color:rgba(255,255,255,.3);padding:16px">暂无用户</p>'
-    html = '<table><thead><tr><th>用户名</th><th>金币</th><th>VIP</th><th>注册时间</th><th>操作</th></tr></thead><tbody>'
-    for r in rows:
-        ts = time.strftime('%Y-%m-%d', time.localtime(r['created_at'])) if r['created_at'] else '—'
-        badge = '<span class="vip-badge yes">✓ VIP</span>' if r['is_vip'] else '<span class="vip-badge no">普通</span>'
-        new_vip = 0 if r['is_vip'] else 1
-        label = '取消VIP' if r['is_vip'] else '开通VIP'
-        html += f"""<tr>
-          <td>{r['username']}</td>
-          <td><span class="coin">{r['coins'] or 0}</span></td>
-          <td>{badge}</td>
-          <td>{ts}</td>
-          <td>
-            <button class="btn-g" onclick="toggleVip('{r['uid']}')">{label}</button>
-            <button class="btn-d" onclick="deleteUser('{r['uid']}')">删除</button>
-          </td>
-        </tr>"""
-    html += '</tbody></table>'
-    return html
-
-def render_txs(rows):
-    if not rows:
-        return '<p style="color:rgba(255,255,255,.3);padding:16px">暂无交易记录</p>'
-    html = '<table><thead><tr><th>用户</th><th>类型</th><th>商品</th><th>金额</th><th>时间</th></tr></thead><tbody>'
-    for r in rows:
-        ts = time.strftime('%m-%d %H:%M', time.localtime(r['ts'])) if r['ts'] else '—'
-        amt = f'<span class="coin">+{r["amount"]}</span>' if r['amount'] else '—'
-        html += f"""<tr>
-          <td>{r.get('username', r.get('uid','—')) or '—'}</td>
-          <td>{r['type'] or '—'}</td>
-          <td>{r['item'] or '—'}</td>
-          <td>{amt}</td>
-          <td>{ts}</td>
-        </tr>"""
-    html += '</tbody></table>'
-    return html
-
-# ─── ROUTES ────────────────────────────────────────────────────────────
 @app.on_event("startup")
 def startup():
     init_db()
 
-@app.get("/", include_in_schema=False)
+@app.get("/")
 def root():
     return RedirectResponse(url="/admin")
 
-@app.get("/admin", include_in_schema=False)
-def admin_page(request: Request):
-    if not check_auth(request):
-        return HTMLResponse(LOGIN_HTML)
-    return HTMLResponse(DASH_HTML)
-
+# ─── AUTH ROUTES ───────────────────────────────────────────────────────
 @app.get("/login", include_in_schema=False)
-def login_get(request: Request):
-    if check_auth(request):
-        return RedirectResponse(url="/admin")
-    return HTMLResponse(LOGIN_HTML)
+def login_page(request: Request):
+    if check_auth(request): return RedirectResponse(url="/admin")
+    return html_response(LOGIN_HTML)
 
 @app.post("/login", include_in_schema=False)
-def login_post(request: Request, password: str = Form(...)):
+def login(request: Request, password: str = Form(...)):
     if password == ADMIN_PASSWORD:
         resp = RedirectResponse(url="/admin", status_code=302)
         resp.set_cookie(key="gv_sid", value=make_token(ADMIN_PASSWORD), httponly=True, path="/", max_age=60*60*24*7)
         return resp
-    return HTMLResponse(LOGIN_HTML.replace('id="err"></p>', 'id="err">密码错误</p>'), status_code=401)
+    return html_response(LOGIN_HTML.replace('id="err"></p>', 'id="err">密码错误</p>'), status_code=401)
 
 @app.post("/logout", include_in_schema=False)
-def logout(request: Request):
-    resp = RedirectResponse(url="/admin", status_code=302)
+def logout():
+    resp = RedirectResponse(url="/login", status_code=302)
     resp.delete_cookie("gv_sid", path="/")
     return resp
 
-# ─── API ────────────────────────────────────────────────────────────────
-@app.get("/api/stats")
-def stats(request: Request):
-    if not check_auth(request):
-        raise HTTPException(401)
-    db = get_db()
+@app.get("/admin", include_in_schema=False)
+def admin(request: Request):
+    if not check_auth(request): return RedirectResponse(url="/login")
     try:
-        users = db.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-        vips  = db.execute("SELECT COUNT(*) FROM users WHERE is_vip=1").fetchone()[0]
-        games = db.execute("SELECT COUNT(*) FROM games").fetchone()[0]
-        txs   = db.execute("SELECT COUNT(*) FROM transactions").fetchone()[0]
-        return JSONResponse({"users":users,"vips":vips,"games":games,"txs":txs})
-    finally:
-        db.close()
+        html = Path("/app/admin.html").read_text()
+    except:
+        try:
+            html = Path("admin.html").read_text()
+        except:
+            return html_response("<h1>Admin panel loading...<script>location.reload()</script></h1>")
+    return html_response(html)
 
-@app.get("/api/users")
-def users(request: Request, q: str = ""):
-    if not check_auth(request):
-        raise HTTPException(401)
+@app.get("/api/me")
+def api_me(request: Request):
+    if not check_auth(request): raise HTTPException(401)
+    return {"ok": True, "ts": ts()}
+
+# ─── PLAYER MODULE ──────────────────────────────────────────────────────
+@app.get("/api/players")
+def api_players(request: Request, q: str = "", page: int = 1, size: int = 20):
+    if not check_auth(request): raise HTTPException(401)
     db = get_db()
-    try:
-        if q:
-            rows = db.execute("SELECT uid,username,coins,is_vip,created_at FROM users WHERE username LIKE ? ORDER BY created_at DESC LIMIT 50", (f"%{q}%",)).fetchall()
+    offset = (page - 1) * size
+    where = "WHERE (uid LIKE ? OR nickname LIKE ? OR username LIKE ?)" if q else ""
+    args = [f"%{q}%"] * 3 if q else []
+    total = db.execute(f"SELECT COUNT(*) FROM players {where}", args).fetchone()[0]
+    rows = db.execute(f"""
+        SELECT uid, username, nickname, level, combat_power, coins, diamonds,
+               is_vip, status, recharge_total, login_count, last_login_at, created_at
+        FROM players {where}
+        ORDER BY created_at DESC LIMIT ? OFFSET ?
+    """, [*args, size, offset]).fetchall()
+    db.close()
+    return json_response({"rows": [row2dict(r) for r in rows], "total": total, "page": page, "size": size})
+
+@app.get("/api/players/{uid}")
+def api_player_detail(request: Request, uid: str):
+    if not check_auth(request): raise HTTPException(401)
+    db = get_db()
+    p = db.execute("SELECT * FROM players WHERE uid=?", (uid,)).fetchone()
+    if not p: db.close(); raise HTTPException(404, "玩家不存在")
+    items = db.execute("SELECT * FROM player_items WHERE uid=?", (uid,)).fetchall()
+    recharges = db.execute("SELECT * FROM player_recharge_log WHERE uid=? ORDER BY created_at DESC LIMIT 20", (uid,)).fetchall()
+    logins = db.execute("SELECT * FROM player_login_log WHERE uid=? ORDER BY login_at DESC LIMIT 10", (uid,)).fetchall()
+    db.close()
+    return json_response({
+        "player": row2dict(p),
+        "items": [row2dict(i) for i in items],
+        "recharges": [row2dict(r) for r in recharges],
+        "logins": [row2dict(l) for l in logins],
+    })
+
+@app.post("/api/players/{uid}/ban")
+def api_ban(request: Request, uid: str, reason: str = Form(...), days: int = Form(0)):
+    if not check_auth(request): raise HTTPException(401)
+    db = get_db()
+    p = db.execute("SELECT uid FROM players WHERE uid=?", (uid,)).fetchone()
+    if not p: db.close(); raise HTTPException(404)
+    ban_type = "banned_perm" if days == 0 else "banned_7d"
+    expire = 0 if days == 0 else ts() + days * 86400
+    db.execute("UPDATE players SET status=?, ban_reason=?, ban_expire_at=? WHERE uid=?",
+               (ban_type, reason, expire, uid))
+    db.execute("INSERT INTO alert_log VALUES (NULL,?,?,?,0,?,0)",
+               ("ban_action", f"管理员封禁玩家 {uid}: {reason}", "info", ts()))
+    db.commit(); db.close()
+    return json_response({"ok": True})
+
+@app.post("/api/players/{uid}/unban")
+def api_unban(request: Request, uid: str):
+    if not check_auth(request): raise HTTPException(401)
+    db = get_db()
+    db.execute("UPDATE players SET status='active', ban_reason='', ban_expire_at=0 WHERE uid=?", (uid,))
+    db.commit(); db.close()
+    return json_response({"ok": True})
+
+@app.post("/api/players/{uid}/currency")
+def api_currency(request: Request, uid: str,
+                  coin_delta: int = Form(0), diamond_delta: int = Form(0), reason: str = Form("")):
+    if not check_auth(request): raise HTTPException(401)
+    db = get_db()
+    p = db.execute("SELECT coins, diamonds FROM players WHERE uid=?", (uid,)).fetchone()
+    if not p: db.close(); raise HTTPException(404)
+    new_coins = max(0, p["coins"] + coin_delta)
+    new_diamonds = max(0, p["diamonds"] + diamond_delta)
+    db.execute("UPDATE players SET coins=?, diamonds=? WHERE uid=?", (new_coins, new_diamonds, uid))
+    db.execute("INSERT INTO transactions VALUES (NULL,?,?,?,'adjustment',?)",
+               (uid, reason or f"金币{coin_delta:+d}/钻石{diamond_delta:+d}", coin_delta or diamond_delta, ts()))
+    db.commit(); db.close()
+    return json_response({"ok": True, "coins": new_coins, "diamonds": new_diamonds})
+
+@app.post("/api/players/{uid}/items")
+def api_items(request: Request, uid: str,
+              action: str = Form(...), item_id: str = Form(...), item_name: str = Form(""),
+              quantity: int = Form(1)):
+    if not check_auth(request): raise HTTPException(401)
+    db = get_db()
+    p = db.execute("SELECT uid FROM players WHERE uid=?", (uid,)).fetchone()
+    if not p: db.close(); raise HTTPException(404)
+    now = ts()
+    if action == "give":
+        existing = db.execute("SELECT id, quantity FROM player_items WHERE uid=? AND item_id=?",
+                              (uid, item_id)).fetchone()
+        if existing:
+            db.execute("UPDATE player_items SET quantity=quantity+? WHERE uid=? AND item_id=?",
+                       (quantity, uid, item_id))
         else:
-            rows = db.execute("SELECT uid,username,coins,is_vip,created_at FROM users ORDER BY created_at DESC LIMIT 50").fetchall()
-        return HTMLResponse(render_users(rows))
-    finally:
-        db.close()
+            db.execute("INSERT INTO player_items VALUES (NULL,?,?,?,?,?)",
+                       (uid, item_id, item_name, quantity, now))
+    elif action == "take":
+        existing = db.execute("SELECT quantity FROM player_items WHERE uid=? AND item_id=?", (uid, item_id)).fetchone()
+        if existing:
+            if existing["quantity"] <= quantity:
+                db.execute("DELETE FROM player_items WHERE uid=? AND item_id=?", (uid, item_id))
+            else:
+                db.execute("UPDATE player_items SET quantity=quantity-? WHERE uid=? AND item_id=?",
+                           (quantity, uid, item_id))
+    db.commit(); db.close()
+    return json_response({"ok": True})
 
-@app.post("/api/users/vip")
-def toggle_vip(request: Request, uid: str = ""):
-    if not check_auth(request):
-        raise HTTPException(401)
-    if not uid:
-        raise HTTPException(400, "uid required")
+@app.post("/api/players/{uid}/rename")
+def api_rename(request: Request, uid: str, new_nickname: str = Form(...)):
+    if not check_auth(request): raise HTTPException(401)
+    if len(new_nickname) > 20: raise HTTPException(400, "昵称太长")
     db = get_db()
-    try:
-        user = db.execute("SELECT is_vip FROM users WHERE uid=?", (uid,)).fetchone()
-        if not user:
-            raise HTTPException(404, "user not found")
-        new_vip = 0 if user[0] else 1
-        db.execute("UPDATE users SET is_vip=? WHERE uid=?", (new_vip, uid))
-        db.commit()
-        return JSONResponse({"ok":True,"is_vip":new_vip})
-    finally:
-        db.close()
+    db.execute("UPDATE players SET nickname=? WHERE uid=?", (new_nickname, uid))
+    db.commit(); db.close()
+    return json_response({"ok": True})
 
-@app.post("/api/users/delete")
-def delete_user(request: Request, uid: str = ""):
-    if not check_auth(request):
-        raise HTTPException(401)
-    if not uid:
-        raise HTTPException(400, "uid required")
+@app.post("/api/players/{uid}/reset")
+def api_reset(request: Request, uid: str, reset_type: str = Form(...)):
+    if not check_auth(request): raise HTTPException(401)
     db = get_db()
-    try:
-        db.execute("DELETE FROM users WHERE uid=?", (uid,))
-        db.commit()
-        return JSONResponse({"ok":True})
-    finally:
-        db.close()
+    if reset_type == "progress":
+        db.execute("UPDATE players SET level=1, exp=0, combat_power=0 WHERE uid=?", (uid,))
+    elif reset_type == "items":
+        db.execute("DELETE FROM player_items WHERE uid=?", (uid,))
+    elif reset_type == "all":
+        db.execute("UPDATE players SET level=1, exp=0, combat_power=0, coins=0, diamonds=0 WHERE uid=?", (uid,))
+        db.execute("DELETE FROM player_items WHERE uid=?", (uid,))
+    db.commit(); db.close()
+    return json_response({"ok": True})
 
-@app.get("/api/transactions")
-def transactions(request: Request):
-    if not check_auth(request):
-        raise HTTPException(401)
+# ─── MAIL MODULE ────────────────────────────────────────────────────────
+@app.get("/api/mails")
+def api_mails(request: Request, page: int = 1, size: int = 20):
+    if not check_auth(request): raise HTTPException(401)
     db = get_db()
-    try:
-        rows = db.execute(
-            "SELECT t.*, u.username FROM transactions t LEFT JOIN users u ON t.uid=u.uid ORDER BY t.ts DESC LIMIT 50"
-        ).fetchall()
-        return HTMLResponse(render_txs(rows))
-    finally:
-        db.close()
+    offset = (page - 1) * size
+    total = db.execute("SELECT COUNT(*) FROM mail").fetchone()[0]
+    rows = db.execute("SELECT * FROM mail ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                       (size, offset)).fetchall()
+    db.close()
+    return json_response({"rows": [row2dict(r) for r in rows], "total": total})
 
+@app.post("/api/mails")
+def api_create_mail(request: Request,
+                    title: str = Form(...), content: str = Form(...),
+                    sender: str = Form("系统"), items_json: str = Form("[]"),
+                    is_all: int = Form(0), target_uids: str = Form(""),
+                    expire_days: int = Form(7)):
+    if not check_auth(request): raise HTTPException(401)
+    db = get_db()
+    mail_id = "mail_" + str(ts()) + "_" + "".join(random.choices(string.ascii_lowercase + string.digits, k=6))
+    now = ts()
+    db.execute("""INSERT INTO mail (mail_id,title,content,sender,items,is_all,target_uids,status,created_at,expire_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?)""",
+        (mail_id, title, content, sender, items_json, is_all, target_uids, "draft", now, now + expire_days * 86400))
+    db.commit(); db.close()
+    return json_response({"ok": True, "mail_id": mail_id})
+
+@app.post("/api/mails/{mail_id}/send")
+def api_send_mail(request: Request, mail_id: str):
+    if not check_auth(request): raise HTTPException(401)
+    db = get_db()
+    m = db.execute("SELECT * FROM mail WHERE mail_id=?", (mail_id,)).fetchone()
+    if not m: db.close(); raise HTTPException(404)
+    now = ts()
+    db.execute("UPDATE mail SET status='sent', sent_at=? WHERE mail_id=?", (now, mail_id))
+    # Distribute to all players if is_all
+    if m["is_all"]:
+        players = db.execute("SELECT uid FROM players WHERE status='active'").fetchall()
+        for p in players:
+            db.execute("INSERT OR IGNORE INTO mail_box VALUES (NULL,?,?,0,?)",
+                       (p["uid"], mail_id, now))
+    elif m["target_uids"]:
+        uids = json.loads(m["target_uids"])
+        for uid in uids:
+            db.execute("INSERT OR IGNORE INTO mail_box VALUES (NULL,?,?,0,?)", (uid, mail_id, now))
+    db.execute("UPDATE mail SET receive_count=? WHERE mail_id=?",
+               (len(players) if m["is_all"] else len(json.loads(m["target_uids"] or "[]")), mail_id))
+    db.commit(); db.close()
+    return json_response({"ok": True})
+
+@app.delete("/api/mails/{mail_id}")
+def api_delete_mail(request: Request, mail_id: str):
+    if not check_auth(request): raise HTTPException(401)
+    db = get_db()
+    db.execute("DELETE FROM mail WHERE mail_id=?", (mail_id,))
+    db.execute("DELETE FROM mail_box WHERE mail_id=?", (mail_id,))
+    db.commit(); db.close()
+    return json_response({"ok": True})
+
+# ─── ANNOUNCEMENTS ──────────────────────────────────────────────────────
+@app.get("/api/announcements")
+def api_announcements(request: Request):
+    if not check_auth(request): raise HTTPException(401)
+    db = get_db()
+    rows = db.execute("SELECT * FROM announcements ORDER BY created_at DESC LIMIT 50").fetchall()
+    db.close()
+    return json_response({"rows": [row2dict(r) for r in rows]})
+
+@app.post("/api/announcements")
+def api_create_announcement(request: Request,
+    title: str = Form(...), content: str = Form(...), priority: str = Form("normal"),
+    img_url: str = Form(""), link_url: str = Form(""),
+    start_at: int = Form(0), end_at: int = Form(0)):
+    if not check_auth(request): raise HTTPException(401)
+    db = get_db()
+    db.execute("""INSERT INTO announcements VALUES (NULL,?,?,?,?,?,?,'active',?,?,?)""",
+               (title, content, priority, img_url, link_url, ts(), start_at, end_at))
+    db.commit(); db.close()
+    return json_response({"ok": True})
+
+@app.post("/api/announcements/{id}/toggle")
+def api_toggle_announcement(request: Request, id: int):
+    if not check_auth(request): raise HTTPException(401)
+    db = get_db()
+    db.execute("UPDATE announcements SET status=CASE WHEN status='active' THEN 'hidden' ELSE 'active' END WHERE id=?", (id,))
+    db.commit(); db.close()
+    return json_response({"ok": True})
+
+# ─── SHOP BANNERS ───────────────────────────────────────────────────────
+@app.get("/api/shop-banners")
+def api_banners(request: Request):
+    if not check_auth(request): raise HTTPException(401)
+    db = get_db()
+    rows = db.execute("SELECT * FROM shop_banners ORDER BY sort_order ASC LIMIT 20").fetchall()
+    db.close()
+    return json_response({"rows": [row2dict(r) for r in rows]})
+
+@app.post("/api/shop-banners")
+def api_create_banner(request: Request,
+    title: str = Form(...), img_url: str = Form(...), link_url: str = Form(""),
+    sort_order: int = Form(0), start_at: int = Form(0), end_at: int = Form(0)):
+    if not check_auth(request): raise HTTPException(401)
+    db = get_db()
+    db.execute("""INSERT INTO shop_banners VALUES (NULL,?,?,?,?,'active',?,?)""",
+               (title, img_url, link_url, sort_order, start_at, end_at))
+    db.commit(); db.close()
+    return json_response({"ok": True})
+
+# ─── GAME CONFIG MODULE ─────────────────────────────────────────────────
+@app.get("/api/config")
+def api_config(request: Request):
+    if not check_auth(request): raise HTTPException(401)
+    db = get_db()
+    rows = db.execute("SELECT * FROM game_config ORDER BY key").fetchall()
+    db.close()
+    return json_response({"rows": [row2dict(r) for r in rows]})
+
+@app.put("/api/config/{key}")
+def api_update_config(request: Request, key: str, value: str = Form(...)):
+    if not check_auth(request): raise HTTPException(401)
+    db = get_db()
+    db.execute("INSERT OR REPLACE INTO game_config VALUES (?,?,'string','','',?)",
+               (key, value, ts()))
+    db.execute("INSERT INTO alert_log VALUES (NULL,?,?,?,0,?,0)",
+               ("config_change", f"配置变更: {key} = {value}", "info", ts()))
+    db.commit(); db.close()
+    return json_response({"ok": True})
+
+@app.get("/api/whitelist")
+def api_whitelist(request: Request):
+    if not check_auth(request): raise HTTPException(401)
+    db = get_db()
+    rows = db.execute("SELECT * FROM whitelist ORDER BY created_at DESC").fetchall()
+    db.close()
+    return json_response({"rows": [row2dict(r) for r in rows]})
+
+@app.post("/api/whitelist")
+def api_add_whitelist(request: Request, uid: str = Form(...), whitelist_type: str = Form("test"), note: str = Form("")):
+    if not check_auth(request): raise HTTPException(401)
+    db = get_db()
+    db.execute("INSERT OR IGNORE INTO whitelist VALUES (NULL,?,?,?,?)", (uid, whitelist_type, note, ts()))
+    db.commit(); db.close()
+    return json_response({"ok": True})
+
+@app.delete("/api/whitelist/{uid}")
+def api_del_whitelist(request: Request, uid: str):
+    if not check_auth(request): raise HTTPException(401)
+    db = get_db()
+    db.execute("DELETE FROM whitelist WHERE uid=?", (uid,))
+    db.commit(); db.close()
+    return json_response({"ok": True})
+
+# ─── DROP TABLES ────────────────────────────────────────────────────────
+@app.get("/api/drop-tables")
+def api_drop_tables(request: Request):
+    if not check_auth(request): raise HTTPException(401)
+    db = get_db()
+    rows = db.execute("SELECT * FROM drop_tables ORDER BY table_id").fetchall()
+    db.close()
+    return json_response({"rows": [row2dict(r) for r in rows]})
+
+@app.put("/api/drop-tables/{table_id}")
+def api_update_drop_table(request: Request, table_id: str, items_json: str = Form(...)):
+    if not check_auth(request): raise HTTPException(401)
+    db = get_db()
+    name = db.execute("SELECT name FROM drop_tables WHERE table_id=?", (table_id,)).fetchone()
+    db.execute("INSERT OR REPLACE INTO drop_tables VALUES (NULL,?,?,?,?)",
+               (table_id, name["name"] if name else table_id, items_json, ts()))
+    db.commit(); db.close()
+    return json_response({"ok": True})
+
+# ─── MALL & EVENTS ──────────────────────────────────────────────────────
+@app.get("/api/mall-items")
+def api_mall(request: Request):
+    if not check_auth(request): raise HTTPException(401)
+    db = get_db()
+    rows = db.execute("SELECT * FROM mall_items ORDER BY sort_order ASC, id ASC").fetchall()
+    db.close()
+    return json_response({"rows": [row2dict(r) for r in rows]})
+
+@app.post("/api/mall-items")
+def api_mall_update(request: Request,
+    item_id: str = Form(...), name: str = Form(...), desc: str = Form(""),
+    price_type: str = Form("coins"), price: int = Form(0), category: str = Form("item"),
+    stock: int = Form(-1), is_active: int = Form(1), sort_order: int = Form(0)):
+    if not check_auth(request): raise HTTPException(401)
+    db = get_db()
+    db.execute("""INSERT OR REPLACE INTO mall_items VALUES (NULL,?,?,?,?,?,?,?,?,?,?)""",
+               (item_id, name, desc, price_type, price, category, stock, 0, is_active, sort_order))
+    db.commit(); db.close()
+    return json_response({"ok": True})
+
+@app.get("/api/events")
+def api_events(request: Request):
+    if not check_auth(request): raise HTTPException(401)
+    db = get_db()
+    rows = db.execute("SELECT * FROM events ORDER BY created_at DESC").fetchall()
+    db.close()
+    return json_response({"rows": [row2dict(r) for r in rows]})
+
+@app.post("/api/events")
+def api_create_event(request: Request,
+    name: str = Form(...), desc: str = Form(""), event_type: str = Form("limited"),
+    start_at: int = Form(0), end_at: int = Form(0),
+    conditions: str = Form("{}"), rewards: str = Form("[]"), status: str = Form("draft")):
+    if not check_auth(request): raise HTTPException(401)
+    db = get_db()
+    event_id = "evt_" + str(ts())
+    db.execute("""INSERT OR IGNORE INTO events VALUES (NULL,?,?,?,?,?,?,?,?,?)""",
+               (event_id, name, desc, event_type, start_at, end_at, conditions, rewards, status, ts()))
+    db.commit(); db.close()
+    return json_response({"ok": True, "event_id": event_id})
+
+@app.post("/api/events/{event_id}/toggle")
+def api_toggle_event(request: Request, event_id: str):
+    if not check_auth(request): raise HTTPException(401)
+    db = get_db()
+    db.execute("UPDATE events SET status=CASE WHEN status='active' THEN 'draft' ELSE 'active' END WHERE event_id=?",
+               (event_id,))
+    db.commit(); db.close()
+    return json_response({"ok": True})
+
+# ─── DASHBOARD ───────────────────────────────────────────────────────────
+@app.get("/api/dashboard/stats")
+def api_dashboard(request: Request):
+    if not check_auth(request): raise HTTPException(401)
+    db = get_db()
+    now = ts()
+    stats = {}
+    for key, sql in [
+        ("total_players", "SELECT COUNT(*) FROM players"),
+        ("active_players", "SELECT COUNT(*) FROM players WHERE status='active'"),
+        ("banned_players", "SELECT COUNT(*) FROM players WHERE status LIKE 'banned%'"),
+        ("vip_players", "SELECT COUNT(*) FROM players WHERE is_vip=1"),
+        ("total_recharge", "SELECT COALESCE(SUM(amount),0) FROM player_recharge_log WHERE status='paid'"),
+        ("today_recharge", "SELECT COALESCE(SUM(amount),0) FROM player_recharge_log WHERE status='paid' AND date(paid_at,'unixepoch')=date('now')"),
+        ("total_mails", "SELECT COUNT(*) FROM mail"),
+        ("active_events", "SELECT COUNT(*) FROM events WHERE status='active'"),
+        ("active_alerts", "SELECT COUNT(*) FROM alert_log WHERE resolved=0"),
+        ("avg_level", "SELECT COALESCE(AVG(level),0) FROM players"),
+        ("total_logins", "SELECT COALESCE(SUM(login_count),0) FROM players"),
+    ]:
+        stats[key] = db.execute(sql).fetchone()[0]
+    db.close()
+    return json_response(stats)
+
+@app.get("/api/dashboard/dau")
+def api_dau(request: Request, days: int = 14):
+    if not check_auth(request): raise HTTPException(401)
+    db = get_db()
+    rows = db.execute("SELECT stat_date, dau, new_users, recharge_amount FROM daily_stats ORDER BY stat_date DESC LIMIT ?", (days,)).fetchall()
+    db.close()
+    return json_response({"rows": [row2dict(r) for r in rows]})
+
+@app.get("/api/dashboard/realtime")
+def api_realtime(request: Request):
+    if not check_auth(request): raise HTTPException(401)
+    db = get_db()
+    online = db.execute("SELECT COUNT(*) FROM players WHERE last_login_at > ?", (ts() - 300,)).fetchone()[0]
+    today_dau = db.execute("SELECT COUNT(*) FROM players WHERE last_login_at > ?", (ts() - 86400,)).fetchone()[0]
+    today_new = db.execute("SELECT COUNT(*) FROM players WHERE created_at > ?", (ts() - 86400,)).fetchone()[0]
+    db.close()
+    return json_response({"online_now": online, "dau_today": today_dau, "new_today": today_new})
+
+@app.get("/api/alerts")
+def api_alerts(request: Request, page: int = 1, size: int = 20):
+    if not check_auth(request): raise HTTPException(401)
+    db = get_db()
+    offset = (page - 1) * size
+    total = db.execute("SELECT COUNT(*) FROM alert_log").fetchone()[0]
+    rows = db.execute("SELECT * FROM alert_log ORDER BY created_at DESC LIMIT ? OFFSET ?", (size, offset)).fetchall()
+    db.close()
+    return json_response({"rows": [row2dict(r) for r in rows], "total": total})
+
+@app.post("/api/alerts/{id}/resolve")
+def api_resolve_alert(request: Request, id: int):
+    if not check_auth(request): raise HTTPException(401)
+    db = get_db()
+    db.execute("UPDATE alert_log SET resolved=1, resolved_at=? WHERE id=?", (ts(), id))
+    db.commit(); db.close()
+    return json_response({"ok": True})
+
+# ─── STATS ───────────────────────────────────────────────────────────────
+@app.get("/api/stats")
+def api_stats(request: Request):
+    if not check_auth(request): raise HTTPException(401)
+    db = get_db()
+    return json_response({
+        "total_players": db.execute("SELECT COUNT(*) FROM players").fetchone()[0],
+        "vip_players": db.execute("SELECT COUNT(*) FROM players WHERE is_vip=1").fetchone()[0],
+        "total_games": db.execute("SELECT COUNT(*) FROM game_config").fetchone()[0],
+        "total_txs": db.execute("SELECT COUNT(*) FROM transactions").fetchone()[0],
+    })
+
+# ─── HEALTH ─────────────────────────────────────────────────────────────
 @app.get("/health")
 def health():
-    return JSONResponse({"status":"ok","time":time.time()})
+    return JSONResponse({"status": "ok", "time": time.time()})
 
-# ─── GUNICORN ENTRY (for Railway) ─────────────────────────────────────
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=PORT)
+# ─────────────────────────────────────────────────────────────────────
+#  HTML 模板
+# ─────────────────────────────────────────────────────────────────────
+
+LOGIN_HTML = """<!DOCTYPE html>
+<html lang="zh">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GameVault GM - 登录</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#0f0c29,#302b63,#24243e);font-family:'Segoe UI',sans-serif}
+.card{background:rgba(255,255,255,.06);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.12);border-radius:20px;padding:48px 40px;width:380px;text-align:center}
+h1{color:#fff;margin-bottom:8px;font-size:28px}
+.sub{color:rgba(255,255,255,.5);margin-bottom:36px;font-size:14px}
+input{display:block;width:100%;padding:14px 16px;margin-bottom:16px;border:1px solid rgba(255,255,255,.15);border-radius:10px;background:rgba(255,255,255,.08);color:#fff;font-size:15px;outline:none;transition:border .2s}
+input:focus{border-color:#6366f1}input::placeholder{color:rgba(255,255,255,.35)}
+.btn{width:100%;padding:14px;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;border:none;border-radius:10px;font-size:16px;font-weight:600;cursor:pointer;transition:opacity .2s}
+.btn:hover{opacity:.88}.err{color:#f87171;margin-bottom:16px;font-size:13px;min-height:18px}
+</style></head>
+<body><div class="card">
+<h1>🎮 GameVault GM</h1><p class="sub">游戏管理后台</p>
+<p class="err" id="err"></p>
+<form method="post" action="/login">
+<input name="password" type="password" placeholder="输入管理密码" required autocomplete="current-password">
+<button class="btn" type="submit">登 录</button>
+</form></div></body></html>"""
+
+# The full admin HTML is loaded from external file
+def load_admin_html():
+    try:
+        return Path("/app/admin.html").read_text()
+    except:
+        return Path("admin.html").read_text()
+
+# This endpoint serves the full admin panel
+@app.get("/admin-panel.html")
+def admin_panel(request: Request):
+    if not check_auth(request): raise HTTPException(401)
+    try:
+        html = Path("/app/admin.html").read_text()
+    except:
+        try:
+            html = Path("admin.html").read_text()
+        except:
+            html = ADMIN_HTML
+    return html_response(html)
