@@ -38,7 +38,7 @@ def init_db():
             ("p004","测试员A","测试员A",10,1000,1200,8000,500,1,now+86400*7,"active","",0,0,3,now-1800,now,now),
             ("p005","氪金大佬","氪金大佬",78,45000,18500,10000,0,1,now+86400*90,"active","",0,9999,120,now-300,now,now),
         ]
-        db.executemany("INSERT OR IGNORE INTO players VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", players)
+        db.executemany("INSERT OR IGNORE INTO players VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", players)
         # Seed items
         items = [
             ("p001","item_001","金币","+1000",now),
@@ -288,20 +288,24 @@ def api_send_mail(request: Request, mail_id: str):
     if not m: db.close(); raise HTTPException(404)
     now = ts()
     db.execute("UPDATE mail SET status='sent', sent_at=? WHERE mail_id=?", (now, mail_id))
-    # Distribute to all players if is_all
+    count = 0
     if m["is_all"]:
-        players = db.execute("SELECT uid FROM players WHERE status='active'").fetchall()
-        for p in players:
+        all_players = db.execute("SELECT uid FROM players WHERE status='active'").fetchall()
+        for p in all_players:
             db.execute("INSERT OR IGNORE INTO mail_box VALUES (NULL,?,?,0,?)",
                        (p["uid"], mail_id, now))
+            count += 1
     elif m["target_uids"]:
-        uids = json.loads(m["target_uids"])
+        try:
+            uids = json.loads(m["target_uids"])
+        except:
+            uids = []
         for uid in uids:
             db.execute("INSERT OR IGNORE INTO mail_box VALUES (NULL,?,?,0,?)", (uid, mail_id, now))
-    db.execute("UPDATE mail SET receive_count=? WHERE mail_id=?",
-               (len(players) if m["is_all"] else len(json.loads(m["target_uids"] or "[]")), mail_id))
+            count += 1
+    db.execute("UPDATE mail SET receive_count=? WHERE mail_id=?", (count, mail_id))
     db.commit(); db.close()
-    return json_response({"ok": True})
+    return json_response({"ok": True, "delivered": count})
 
 @app.delete("/api/mails/{mail_id}")
 def api_delete_mail(request: Request, mail_id: str):
@@ -328,8 +332,9 @@ def api_create_announcement(request: Request,
     start_at: int = Form(0), end_at: int = Form(0)):
     if not check_auth(request): raise HTTPException(401)
     db = get_db()
-    db.execute("""INSERT INTO announcements VALUES (NULL,?,?,?,?,?,?,'active',?,?,?)""",
-               (title, content, priority, img_url, link_url, ts(), start_at, end_at))
+    db.execute("""INSERT INTO announcements (title,content,priority,img_url,link_url,status,start_at,end_at,created_at)
+        VALUES (?,?,?,?,?,?,?,?,?)""",
+               (title, content, priority, img_url, link_url, 'active', start_at, end_at, ts()))
     db.commit(); db.close()
     return json_response({"ok": True})
 
@@ -374,7 +379,7 @@ def api_config(request: Request):
 def api_update_config(request: Request, key: str, value: str = Form(...)):
     if not check_auth(request): raise HTTPException(401)
     db = get_db()
-    db.execute("INSERT OR REPLACE INTO game_config VALUES (?,?,'string','','',?)",
+    db.execute("INSERT OR REPLACE INTO game_config (key,value,type,label,desc,updated_at) VALUES (?,?,'string','','',?)",
                (key, value, ts()))
     db.execute("INSERT INTO alert_log VALUES (NULL,?,?,?,0,?,0)",
                ("config_change", f"配置变更: {key} = {value}", "info", ts()))
@@ -440,8 +445,9 @@ def api_mall_update(request: Request,
     stock: int = Form(-1), is_active: int = Form(1), sort_order: int = Form(0)):
     if not check_auth(request): raise HTTPException(401)
     db = get_db()
-    db.execute("""INSERT OR REPLACE INTO mall_items VALUES (NULL,?,?,?,?,?,?,?,?,?,?)""",
-               (item_id, name, desc, price_type, price, category, stock, 0, is_active, sort_order))
+    db.execute("""INSERT OR REPLACE INTO mall_items (item_id,name,desc,price_type,price,category,stock,sold_count,is_active,sort_order)
+        VALUES (?,?,?,?,?,?,?,0,?,?)""",
+               (item_id, name, desc, price_type, price, category, stock, is_active, sort_order))
     db.commit(); db.close()
     return json_response({"ok": True})
 
@@ -461,7 +467,8 @@ def api_create_event(request: Request,
     if not check_auth(request): raise HTTPException(401)
     db = get_db()
     event_id = "evt_" + str(ts())
-    db.execute("""INSERT OR IGNORE INTO events VALUES (NULL,?,?,?,?,?,?,?,?,?)""",
+    db.execute("""INSERT OR IGNORE INTO events (event_id,name,desc,event_type,start_at,end_at,conditions,rewards,status,created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?)""",
                (event_id, name, desc, event_type, start_at, end_at, conditions, rewards, status, ts()))
     db.commit(); db.close()
     return json_response({"ok": True, "event_id": event_id})
