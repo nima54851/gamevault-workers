@@ -50,7 +50,8 @@ def init_db():
         for i in range(14, 0, -1):
             d = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
             dau = random.randint(800, 1500)
-            db.execute("INSERT OR IGNORE INTO daily_stats VALUES (?,?,?,?,?,?,?,?,?,?)",
+            db.execute("""INSERT OR IGNORE INTO daily_stats (stat_date,dau,new_users,active_users,recharge_count,recharge_amount,vip_count,avg_online,created_at)
+                VALUES (?,?,?,?,?,?,?,?,?)""",
                 (d, dau, random.randint(20,80), dau, random.randint(5,30), random.randint(200,2000),
                  random.randint(50,120), random.randint(300,800), now))
         # Seed alerts
