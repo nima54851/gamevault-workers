@@ -2,7 +2,7 @@
 GameVault GM 管理后台 - FastAPI
 完整版 v2.0 | 5大模块
 """
-import os, sqlite3, hashlib, time, json, random, string, re
+import os, sqlite3, hashlib, time, json, random, string, re, secrets
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
@@ -27,6 +27,9 @@ def init_db():
     db = get_db()
     schema = Path("schema.sql").read_text()
     db.executescript(schema)
+    # Migration: add token column if not exists
+    try: db.execute("ALTER TABLE players ADD COLUMN player_token TEXT DEFAULT ''")
+    except: pass
     # Seed demo players
     cur = db.execute("SELECT COUNT(*) FROM players")
     if cur.fetchone()[0] == 0:
@@ -72,15 +75,15 @@ def check_auth(request: Request) -> bool:
     return request.cookies.get("gv_sid") == make_token(ADMIN_PASSWORD)
 
 # ─── PLAYER AUTH HELPERS ───────────────────────────────────────────────
-def player_token(username: str) -> str:
-    return hashlib.sha256((username + "gv_player_salt").encode()).hexdigest()[:32]
+def new_token() -> str:
+    return secrets.token_hex(32)
 
 def check_player(request: Request):
     token = request.headers.get("X-Player-Token", "")
     if not token:
         raise HTTPException(401, "请先登录")
     db = get_db()
-    row = db.execute("SELECT * FROM players WHERE uid=?", (token[:16],)).fetchone()
+    row = db.execute("SELECT * FROM players WHERE player_token=?", (token,)).fetchone()
     db.close()
     if not row:
         raise HTTPException(401, "登录已失效，请重新登录")
@@ -603,14 +606,14 @@ def api_register(request: Request,
     # Generate uid (timestamp + random)
     import random
     uid = f"p{int(time.time()) % 900000 + 100000}{random.randint(10,99)}"
-    token = player_token(uid)
+    token = new_token()
     pw_hash = hashlib.sha256((password + "gv_salt").encode()).hexdigest()
     now = ts()
     display_nick = nickname.strip() or username
     db.execute("""INSERT INTO players
-        (uid,username,nickname,level,coins,diamonds,is_vip,status,login_count,last_login_at,created_at,updated_at)
-        VALUES (?,?,?,1,1000,50,0,'active',1,?,?,?)""",
-        (uid, username, display_nick, now, now, now))
+        (uid,username,nickname,level,coins,diamonds,is_vip,status,player_token,login_count,last_login_at,created_at,updated_at)
+        VALUES (?,?,?,1,1000,50,0,'active',?,1,?,?,?)""",
+        (uid, username, display_nick, token, now, now, now))
     db.commit()
     db.close()
     return JSONResponse({"ok": True, "token": token, "uid": uid,
@@ -633,11 +636,11 @@ def api_login(request: Request,
     # Password stored as empty hash on register, so allow first-time login
     if p.get('password_hash') and p['password_hash'] != pw_hash:
         db.close(); raise HTTPException(401, "用户名或密码错误")
-    # Update login stats
-    token = player_token(p['uid'])
+    # Update login stats and issue new token
+    token = new_token()
     now = ts()
-    db.execute("UPDATE players SET login_count=login_count+1, last_login_at=?, updated_at=? WHERE uid=?",
-               (now, now, p['uid']))
+    db.execute("UPDATE players SET player_token=?, login_count=login_count+1, last_login_at=?, updated_at=? WHERE uid=?",
+               (token, now, now, p['uid']))
     db.commit()
     db.close()
     return JSONResponse({"ok": True, "token": token, "player": player_response(p)})
