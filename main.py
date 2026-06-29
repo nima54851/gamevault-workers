@@ -209,6 +209,20 @@ def api_unban(request: Request, uid: str):
     db.commit(); db.close()
     return json_response({"ok": True})
 
+@app.post("/api/players/{uid}/vip")
+def api_vip(request: Request, uid: str, is_vip: int = Form(...)):
+    """设置/取消 VIP 权限 is_vip: 1=授予VIP, 0=取消VIP"""
+    if not check_auth(request): raise HTTPException(401)
+    db = get_db()
+    p = db.execute("SELECT uid, nickname FROM players WHERE uid=?", (uid,)).fetchone()
+    if not p: db.close(); raise HTTPException(404, "玩家不存在")
+    db.execute("UPDATE players SET is_vip=? WHERE uid=?", (1 if is_vip else 0, uid))
+    action = "授予VIP" if is_vip else "取消VIP"
+    db.execute("INSERT INTO transactions VALUES (NULL,?,?,?,'vip_change',?)",
+               (uid, f"管理员{action}玩家 {p['nickname']}", 0, ts()))
+    db.commit(); db.close()
+    return json_response({"ok": True, "is_vip": is_vip, "uid": uid})
+
 @app.post("/api/players/{uid}/currency")
 def api_currency(request: Request, uid: str,
                   coin_delta: int = Form(0), diamond_delta: int = Form(0), reason: str = Form("")):
@@ -579,11 +593,22 @@ def api_stats(request: Request):
     })
 
 # ─── AUTH API ───────────────────────────────────────────────────────────
+import random
+
+ADJECTIVES = ["狂拽","酷炫","霸气","萌萌","华丽","神秘","闪耀","灵动","炫彩","热血","飞翔","疾风","星辰","月光","烈焰","冰霜","雷霆","疾雷","天翔","幻影"]
+NOUNS = ["玩家","勇者","骑士","法师","剑客","刺客","猎人","战神","王者","小将","游侠","精灵","领主","守护者","探险家","召唤师","暗影","龙魂","凤凰"]
+
+def gen_nickname() -> str:
+    """生成随机游戏昵称"""
+    adj = random.choice(ADJECTIVES)
+    noun = random.choice(NOUNS)
+    num = random.randint(10, 99)
+    return f"{adj}{noun}{num}"
+
 @app.post("/api/auth/register")
 def api_register(request: Request,
                 username: str = Form(...),
-                password: str = Form(...),
-                nickname: str = Form("")):
+                password: str = Form(...)):
     if not username or not password:
         raise HTTPException(400, "用户名和密码不能为空")
     if len(username) < 3 or len(username) > 20:
@@ -604,12 +629,12 @@ def api_register(request: Request,
         db.close()
         raise HTTPException(409, "用户名已被注册")
     # Generate uid (timestamp + random)
-    import random
     uid = f"p{int(time.time()) % 900000 + 100000}{random.randint(10,99)}"
     token = new_token()
     pw_hash = hashlib.sha256((password + "gv_salt").encode()).hexdigest()
     now = ts()
-    display_nick = nickname.strip() or username
+    # 随机生成游戏昵称，不要求用户输入
+    display_nick = gen_nickname()
     db.execute("""INSERT INTO players
         (uid,username,nickname,level,coins,diamonds,is_vip,status,player_token,login_count,last_login_at,created_at,updated_at)
         VALUES (?,?,?,1,1000,50,0,'active',?,1,?,?,?)""",
