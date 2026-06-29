@@ -907,12 +907,18 @@ function renderPdTab(tab) {
       <table class="data-table"><thead><tr><th>IP</th><th>设备</th><th>登录时间</th></tr></thead>
       <tbody>${lg.map(l => `<tr><td>${l.ip || '—'}</td><td>${l.device || '—'}</td><td>${l.login_at ? timeAgo(l.login_at) : '—'}</td></tr>`).join('')}</tbody></table>`;
   } else if (tab === 'actions') {
+    const isVip = p.player.is_vip;
     el.innerHTML = `
       <div class="grid2" style="gap:16px">
         <button class="btn btn-warning" onclick="openCurrencyModal('${p.player.uid}','${p.player.nickname}')">💰 调整货币</button>
         <button class="btn btn-primary" onclick="openRenameModal('${p.player.uid}','${p.player.nickname}')">✏️ 修改昵称</button>
         <button class="btn btn-danger" onclick="openResetModal('${p.player.uid}','${p.player.nickname}')">🔄 重置进度</button>
         <button class="btn btn-primary" onclick="openMailPlayer('${p.player.uid}','${p.player.nickname}')">📧 发送邮件</button>
+      </div>
+      <div class="grid2" style="margin-top:16px;gap:16px">
+        <button class="btn ${isVip ? 'btn-danger' : 'btn-success'}" onclick="setVip('${p.player.uid}', ${isVip ? 0 : 1})">
+          ${isVip ? '👑 取消 VIP 权限' : '⭐ 授予 VIP 权限'}
+        </button>
       </div>
       <div style="margin-top:16px">
         <h3>封禁记录</h3>
@@ -925,7 +931,17 @@ function renderPdTab(tab) {
 // ════════════════════════════════════════════
 //  PLAYER ACTIONS
 // ════════════════════════════════════════════
-async function unbanPlayer(uid) {
+async function setVip(uid, isVip) {
+  const action = isVip ? '授予' : '取消';
+  if (!confirm(`确认${action} VIP权限？`)) return;
+  const r = await api(`/api/players/${uid}/vip`, {method:'POST', body: new URLSearchParams({is_vip: isVip})});
+  if (r && r.ok) {
+    toast(`${action} VIP成功`);
+    loadPlayers(currentPlayerPage);
+    openPlayer(uid);
+  }
+}
+
   if (!confirm('确认解封该玩家？')) return;
   const r = await api(`/api/players/${uid}/unban`, {method:'POST'});
   if (r && r.ok) { toast('已解封'); loadPlayers(currentPlayerPage); closePlayerDetail(); }
