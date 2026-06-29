@@ -942,6 +942,7 @@ async function setVip(uid, isVip) {
   }
 }
 
+async function unbanPlayer(uid) {
   if (!confirm('确认解封该玩家？')) return;
   const r = await api(`/api/players/${uid}/unban`, {method:'POST'});
   if (r && r.ok) { toast('已解封'); loadPlayers(currentPlayerPage); closePlayerDetail(); }
