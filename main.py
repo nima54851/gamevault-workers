@@ -726,3 +726,200 @@ def admin_panel(request: Request):
         except:
             html = ADMIN_HTML
     return html_response(html)
+
+# ═══════════════════════════════════════════════════════════════════
+#  GameVault Auth API — 注册 / 登录 / 我的资料
+# ═══════════════════════════════════════════════════════════════════
+import hashlib, secrets as _secrets
+
+def _gv_hash_pwd(password: str) -> str:
+    return hashlib.sha256((password + "gv_salt_2024").encode()).hexdigest()[:32]
+
+def _gv_make_token(username: str) -> str:
+    return hashlib.sha256(f"{username}{_secrets.token_hex(16)}".encode()).hexdigest()[:48]
+
+def _ensure_player_token_col():
+    db = get_db()
+    try:
+        db.execute("ALTER TABLE players ADD COLUMN player_token TEXT DEFAULT ''")
+        db.commit()
+    except:
+        pass
+    db.close()
+
+# ── 兼容层：创建 auth 专用表 ─────────────────────────────────────
+def _init_auth_db():
+    db = get_db()
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS gv_auth (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL,
+            nickname TEXT NOT NULL DEFAULT '',
+            player_uid TEXT UNIQUE NOT NULL,
+            player_token TEXT NOT NULL DEFAULT '',
+            coins INTEGER NOT NULL DEFAULT 1000,
+            gems INTEGER NOT NULL DEFAULT 50,
+            is_vip INTEGER NOT NULL DEFAULT 0,
+            created_at INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+    db.commit()
+    db.close()
+
+_init_auth_db()
+_ensure_player_token_col()
+
+# ── 辅助：从 header 获取当前 player ───────────────────────────────
+def _get_current_player(request: Request):
+    token = request.headers.get("X-Player-Token", "")
+    if not token:
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            token = auth[7:]
+    if not token:
+        raise HTTPException(401, "未登录")
+    db = get_db()
+    row = db.execute(
+        "SELECT * FROM gv_auth WHERE player_token = ?", (token,)
+    ).fetchone()
+    db.close()
+    if not row:
+        raise HTTPException(401, "登录已过期，请重新登录")
+    return dict(row)
+
+# ── 响应字段（兼容前端） ─────────────────────────────────────────
+def _player_dict(row: dict) -> dict:
+    return {
+        "uid": row["player_uid"],
+        "username": row["username"],
+        "nickname": row["nickname"],
+        "level": 1,
+        "exp": 0,
+        "combat_power": 0,
+        "coins": row["coins"],
+        "diamonds": row["gems"],   # 前端用 diamonds
+        "is_vip": row["is_vip"],
+        "status": "active",
+        "login_count": 1,
+    }
+
+# ── Auth 路由 ───────────────────────────────────────────────────
+@app.post("/api/auth/register")
+def api_register(
+    request: Request,
+    username: str = Form(None),
+    password: str = Form(None),
+):
+    if not username or not password:
+        raise HTTPException(400, "用户名和密码不能为空")
+    if len(username) < 3 or len(username) > 32:
+        raise HTTPException(400, "用户名需3-32个字符")
+    if len(password) < 6:
+        raise HTTPException(400, "密码至少6位")
+
+    db = get_db()
+    existing = db.execute(
+        "SELECT id FROM gv_auth WHERE username = ?", (username,)
+    ).fetchone()
+    if existing:
+        db.close()
+        raise HTTPException(400, "用户名已被占用")
+
+    import random
+    now = int(time.time())
+    uid = f"p{10000000 + random.randint(1000000, 9999999)}"
+    token = _gv_make_token(username)
+    nicknames = ["霸天虎将", "星辰法师", "暗夜刺客", "烈焰战神", "冰霜女王",
+                  "疾风剑豪", "龙魂骑士", "幻影游侠", "雷霆战神", "玄天武帝",
+                  "紫电青霜", "无双战神", "苍穹剑神", "地狱火神", "银河帝王"]
+    nickname = random.choice(nicknames) + str(random.randint(10, 99))
+
+    db.execute(
+        "INSERT INTO gv_auth (username,password,nickname,player_uid,player_token,coins,gems,created_at) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (username, _gv_hash_pwd(password), nickname, uid, token, 1000, 50, now)
+    )
+    db.commit()
+    row = db.execute("SELECT * FROM gv_auth WHERE username = ?", (username,)).fetchone()
+    db.close()
+    pd = _player_dict(dict(row))
+    return JSONResponse({"ok": True, "token": token, "uid": uid, "player": pd})
+
+
+@app.post("/api/auth/login")
+def api_login(
+    request: Request,
+    username: str = Form(None),
+    password: str = Form(None),
+):
+    if not username or not password:
+        raise HTTPException(400, "用户名和密码不能为空")
+
+    db = get_db()
+    row = db.execute(
+        "SELECT * FROM gv_auth WHERE username = ? AND password = ?",
+        (username, _gv_hash_pwd(password))
+    ).fetchone()
+    db.close()
+    if not row:
+        raise HTTPException(401, "用户名或密码错误")
+
+    # 更新 token
+    new_token = _gv_make_token(username)
+    db2 = get_db()
+    db2.execute("UPDATE gv_auth SET player_token = ? WHERE id = ?", (new_token, row["id"]))
+    db2.commit()
+    row = db2.execute("SELECT * FROM gv_auth WHERE id = ?", (row["id"],)).fetchone()
+    db2.close()
+    pd = _player_dict(dict(row))
+    return JSONResponse({"ok": True, "token": new_token, "player": pd})
+
+
+@app.get("/api/auth/me")
+def api_me(request: Request):
+    row = _get_current_player(request)
+    return JSONResponse({"player": _player_dict(row)})
+
+
+@app.get("/api/auth/notifications")
+def api_notifications(request: Request):
+    row = _get_current_player(request)
+    now = int(time.time())
+    return JSONResponse({
+        "notifications": [
+            {"id": 1, "type": "system", "title": "欢迎回来！",
+             "content": f"你好 {row['nickname']}，欢迎进入 GameVault 游戏世界 🎮",
+             "time": now, "read": False},
+            {"id": 2, "type": "event", "title": "新游戏上线",
+             "content": "多人联机大厅已开放，叫上朋友一起来玩！",
+             "time": now - 3600, "read": False},
+            {"id": 3, "type": "activity", "title": "充值返利活动",
+             "content": "首次充值享双倍金币，限时7天！",
+             "time": now - 7200, "read": True},
+        ],
+        "count": 2,
+    })
+
+
+@app.get("/api/profile")
+def api_profile(request: Request):
+    row = _get_current_player(request)
+    return JSONResponse({"player": _player_dict(row)})
+
+
+@app.post("/api/profile")
+def api_update_profile(
+    request: Request,
+    nickname: str = Form(None),
+    avatar: str = Form(None),
+):
+    player = _get_current_player(request)
+    db = get_db()
+    if nickname:
+        db.execute("UPDATE gv_auth SET nickname = ? WHERE id = ?",
+                  (nickname[:12], player["id"]))
+    db.commit()
+    row = db.execute("SELECT * FROM gv_auth WHERE id = ?", (player["id"],)).fetchone()
+    db.close()
+    return JSONResponse({"ok": True, "player": _player_dict(dict(row))})
