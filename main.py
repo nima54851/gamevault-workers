@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # ─── CONFIG ────────────────────────────────────────────────────────────
 PORT = int(os.getenv("PORT", "8000"))
-DB_PATH = os.getenv("DB_PATH", "./gamevault.db")
+DB_PATH = os.getenv("DB_PATH", "/data/gamevault.db")  # /data is Railway's persistent directory
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "gamevault2024")
 
 # ─── DATABASE ──────────────────────────────────────────────────────────
