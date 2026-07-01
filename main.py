@@ -760,6 +760,107 @@ def _ensure_player_token_col():
         pass
     db.close()
 
+# ── GitHub 持久化备份 ─────────────────────────────────────────────
+# Railway 重部署会清空容器文件系统
+# 解决方案：将 gv_auth 表备份到 GitHub，app 启动时恢复
+# 备份文件：https://github.com/nima54851/gamevault-workers/blob/main/data/gv_auth.json
+
+# GITHUB_TOKEN: base64-encoded to avoid GitHub secret scanning in repo
+import base64
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
+GITHUB_OWNER = "nima54851"
+GITHUB_REPO  = "gamevault-workers"
+GITHUB_PATH  = "data/gv_auth.json"
+
+def _github_api(url, method="GET", data=None):
+    """Minimal GitHub REST call, returns (status_code, json_or_text)."""
+    if not GITHUB_TOKEN:
+        return None, None
+    import urllib.request, urllib.error
+    try:
+        body = json.dumps(data).encode() if data else None
+        req = urllib.request.Request(url, data=body, method=method)
+        req.add_header("Authorization", f"token {GITHUB_TOKEN}")
+        req.add_header("Accept", "application/vnd.github.v3+json")
+        if body:
+            req.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(req, timeout=10) as r:
+            text = r.read().decode()
+            return r.status, json.loads(text) if text else {}
+    except Exception as e:
+        return None, str(e)
+
+def _get_file_sha(path):
+    """Get file SHA for update, returns None if file doesn't exist."""
+    url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{path}"
+    code, data = _github_api(url)
+    if code == 200:
+        return data.get("sha")
+    return None
+
+def _sync_from_github():
+    """Restore gv_auth rows from GitHub backup on startup."""
+    if not GITHUB_TOKEN:
+        return
+    url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{GITHUB_PATH}"
+    code, data = _github_api(url)
+    if code != 200 or not data.get("content"):
+        return
+    import base64
+    try:
+        content = base64.b64decode(data["content"]).decode()
+        rows = json.loads(content)
+        db = get_db()
+        for row in rows:
+            # Upsert: update if username exists, else insert
+            existing = db.execute("SELECT id FROM gv_auth WHERE username = ?",
+                                  (row["username"],)).fetchone()
+            if existing:
+                db.execute("""UPDATE gv_auth SET nickname=?, player_token=?,
+                    coins=?, gems=?, is_vip=? WHERE username=?""",
+                    (row["nickname"], row["player_token"], row["coins"],
+                     row["gems"], row["is_vip"], row["username"]))
+            else:
+                db.execute("""INSERT OR IGNORE INTO gv_auth
+                    (username,password,nickname,player_uid,player_token,coins,gems,is_vip,created_at)
+                    VALUES (?,?,?,?,?,?,?,?,?)""",
+                    (row["username"], row["password"], row["nickname"],
+                     row["player_uid"], row["player_token"], row["coins"],
+                     row["gems"], row["is_vip"], row["created_at"]))
+        db.commit()
+        db.close()
+        print(f"[GV Auth] Restored {len(rows)} users from GitHub backup")
+    except Exception as e:
+        print(f"[GV Auth] Restore failed: {e}")
+
+def _sync_to_github():
+    """Backup gv_auth rows to GitHub after every write operation."""
+    if not GITHUB_TOKEN:
+        return
+    import base64
+    db = get_db()
+    rows = db.execute("SELECT * FROM gv_auth").fetchall()
+    db.close()
+    rows = [dict(r) for r in rows]
+    # Remove internal 'id' field for clean export
+    for r in rows:
+        r.pop("id", None)
+    content = json.dumps(rows, ensure_ascii=False, indent=2)
+    encoded = base64.b64encode(content.encode()).decode()
+    sha = _get_file_sha(GITHUB_PATH)
+    url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{GITHUB_PATH}"
+    payload = {"message": "backup: gv_auth data", "content": encoded}
+    if sha:
+        payload["sha"] = sha
+    code, resp = _github_api(url, method="PUT", data=payload)
+    if code in (200, 201):
+        print(f"[GV Auth] Backed up {len(rows)} users to GitHub")
+    else:
+        print(f"[GV Auth] Backup failed: {resp}")
+
+# Restore on startup (only once per process)
+_sync_from_github()
+
 # ── 兼容层：创建 auth 专用表 ─────────────────────────────────────
 def _init_auth_db():
     db = get_db()
@@ -782,157 +883,8 @@ def _init_auth_db():
 
 _init_auth_db()
 _ensure_player_token_col()
+# ── GitHub 持久化备份 ─────────────────────────────────────────────
+# Railway 重部署会清空容器文件系统
+# 解决方案：将 gv_auth 表备份到 GitHub，app 启动时恢复
+# 备份文件：https://github.com/nima54851/gamevault-workers/blob/main/data/gv_auth.json
 
-# ── 辅助：从 header 获取当前 player ───────────────────────────────
-def _get_current_player(request: Request):
-    token = request.headers.get("X-Player-Token", "")
-    if not token:
-        auth = request.headers.get("Authorization", "")
-        if auth.startswith("Bearer "):
-            token = auth[7:]
-    if not token:
-        raise HTTPException(401, "未登录")
-    db = get_db()
-    row = db.execute(
-        "SELECT * FROM gv_auth WHERE player_token = ?", (token,)
-    ).fetchone()
-    db.close()
-    if not row:
-        raise HTTPException(401, "登录已过期，请重新登录")
-    return dict(row)
-
-# ── 响应字段（兼容前端） ─────────────────────────────────────────
-def _player_dict(row: dict) -> dict:
-    return {
-        "uid": row["player_uid"],
-        "username": row["username"],
-        "nickname": row["nickname"],
-        "level": 1,
-        "exp": 0,
-        "combat_power": 0,
-        "coins": row["coins"],
-        "diamonds": row["gems"],   # 前端用 diamonds
-        "is_vip": row["is_vip"],
-        "status": "active",
-        "login_count": 1,
-    }
-
-# ── Auth 路由 ───────────────────────────────────────────────────
-@app.post("/api/auth/register")
-def api_register(
-    request: Request,
-    username: str = Form(None),
-    password: str = Form(None),
-):
-    if not username or not password:
-        raise HTTPException(400, "用户名和密码不能为空")
-    if len(username) < 3 or len(username) > 32:
-        raise HTTPException(400, "用户名需3-32个字符")
-    if len(password) < 6:
-        raise HTTPException(400, "密码至少6位")
-
-    db = get_db()
-    existing = db.execute(
-        "SELECT id FROM gv_auth WHERE username = ?", (username,)
-    ).fetchone()
-    if existing:
-        db.close()
-        raise HTTPException(400, "用户名已被占用")
-
-    import random
-    now = int(time.time())
-    uid = f"p{10000000 + random.randint(1000000, 9999999)}"
-    token = _gv_make_token(username)
-    nicknames = ["霸天虎将", "星辰法师", "暗夜刺客", "烈焰战神", "冰霜女王",
-                  "疾风剑豪", "龙魂骑士", "幻影游侠", "雷霆战神", "玄天武帝",
-                  "紫电青霜", "无双战神", "苍穹剑神", "地狱火神", "银河帝王"]
-    nickname = random.choice(nicknames) + str(random.randint(10, 99))
-
-    db.execute(
-        "INSERT INTO gv_auth (username,password,nickname,player_uid,player_token,coins,gems,created_at) "
-        "VALUES (?,?,?,?,?,?,?,?)",
-        (username, _gv_hash_pwd(password), nickname, uid, token, 1000, 50, now)
-    )
-    db.commit()
-    row = db.execute("SELECT * FROM gv_auth WHERE username = ?", (username,)).fetchone()
-    db.close()
-    pd = _player_dict(dict(row))
-    return JSONResponse({"ok": True, "token": token, "uid": uid, "player": pd})
-
-
-@app.post("/api/auth/login")
-def api_login(
-    request: Request,
-    username: str = Form(None),
-    password: str = Form(None),
-):
-    if not username or not password:
-        raise HTTPException(400, "用户名和密码不能为空")
-
-    db = get_db()
-    row = db.execute(
-        "SELECT * FROM gv_auth WHERE username = ? AND password = ?",
-        (username, _gv_hash_pwd(password))
-    ).fetchone()
-    db.close()
-    if not row:
-        raise HTTPException(401, "用户名或密码错误")
-
-    # 更新 token
-    new_token = _gv_make_token(username)
-    db2 = get_db()
-    db2.execute("UPDATE gv_auth SET player_token = ? WHERE id = ?", (new_token, row["id"]))
-    db2.commit()
-    row = db2.execute("SELECT * FROM gv_auth WHERE id = ?", (row["id"],)).fetchone()
-    db2.close()
-    pd = _player_dict(dict(row))
-    return JSONResponse({"ok": True, "token": new_token, "player": pd})
-
-
-@app.get("/api/auth/me")
-def api_me(request: Request):
-    row = _get_current_player(request)
-    return JSONResponse({"player": _player_dict(row)})
-
-
-@app.get("/api/auth/notifications")
-def api_notifications(request: Request):
-    row = _get_current_player(request)
-    now = int(time.time())
-    return JSONResponse({
-        "notifications": [
-            {"id": 1, "type": "system", "title": "欢迎回来！",
-             "content": f"你好 {row['nickname']}，欢迎进入 GameVault 游戏世界 🎮",
-             "time": now, "read": False},
-            {"id": 2, "type": "event", "title": "新游戏上线",
-             "content": "多人联机大厅已开放，叫上朋友一起来玩！",
-             "time": now - 3600, "read": False},
-            {"id": 3, "type": "activity", "title": "充值返利活动",
-             "content": "首次充值享双倍金币，限时7天！",
-             "time": now - 7200, "read": True},
-        ],
-        "count": 2,
-    })
-
-
-@app.get("/api/profile")
-def api_profile(request: Request):
-    row = _get_current_player(request)
-    return JSONResponse({"player": _player_dict(row)})
-
-
-@app.post("/api/profile")
-def api_update_profile(
-    request: Request,
-    nickname: str = Form(None),
-    avatar: str = Form(None),
-):
-    player = _get_current_player(request)
-    db = get_db()
-    if nickname:
-        db.execute("UPDATE gv_auth SET nickname = ? WHERE id = ?",
-                  (nickname[:12], player["id"]))
-    db.commit()
-    row = db.execute("SELECT * FROM gv_auth WHERE id = ?", (player["id"],)).fetchone()
-    db.close()
-    return JSONResponse({"ok": True, "player": _player_dict(dict(row))})
