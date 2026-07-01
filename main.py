@@ -14,7 +14,20 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # ─── CONFIG ────────────────────────────────────────────────────────────
 PORT = int(os.getenv("PORT", "8000"))
-DB_PATH = os.getenv("DB_PATH", "/data/gamevault.db")  # /data is Railway's persistent directory
+def _get_db_path():
+    """Smart DB path: Railway persistent /data if available, else current dir."""
+    data_path = "/data/gamevault.db"
+    if os.getenv("RAILWAY_VOLUME_ID"):
+        return data_path
+    try:
+        os.makedirs("/data", exist_ok=True)
+        open("/data/.write_test", "w").close()
+        os.remove("/data/.write_test")
+        return data_path
+    except:
+        return "./gamevault.db"
+
+DB_PATH = os.getenv("DB_PATH") or _get_db_path()
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "gamevault2024")
 
 # ─── DATABASE ──────────────────────────────────────────────────────────
